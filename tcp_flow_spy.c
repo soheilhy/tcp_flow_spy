@@ -19,6 +19,7 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+#include <linux/version.h>
 #include <linux/kernel.h>
 #include <linux/kprobes.h>
 #include <linux/socket.h>
@@ -29,7 +30,6 @@
 #include <linux/time.h>
 #include <linux/ktime.h>
 #include <linux/timer.h>
-//#include <net/net_namespace.h>
 
 #include <net/tcp.h>
 
@@ -67,7 +67,7 @@ static int live __read_mostly = 0;
 MODULE_PARM_DESC(live, "(0) stats of completed flows are printed, (1) stats of live flows are printed.");
 module_param(live, int, 0);
 
-static const char procname[] = "tcpflowprobe";
+static const char procname[] = "tcpflowspy";
 
 struct tcp_flow_log {
     struct timespec first_packet_tstamp;
@@ -549,7 +549,7 @@ static struct jprobe tcp_transmit_jprobe = {
     .entry = (kprobe_opcode_t*) jtcp_transmit_skb,
 };
 
-static int tcpflowprobe_open(struct inode * inode, struct file * file)
+static int tcpflowspy_open(struct inode * inode, struct file * file)
 {
     /* Reset (empty) log */
     spin_lock_bh(&tcp_flow_spy.lock);
@@ -578,7 +578,7 @@ static inline int tcpprobe_timespec_larger(struct timespec lhs, struct timespec 
 
 static int last_printed_flow_index = 0;
 
-static int tcpflowprobe_sprint(char *tbuf, int n)
+static int tcpflowspy_sprint(char *tbuf, int n)
 {
     const struct tcp_flow_log *p = 0;
     struct timespec tv;
@@ -674,7 +674,7 @@ ret:
 
 #define PRINT_BUFF_SIZE 256
 
-static ssize_t tcpflowprobe_read(struct file *file, char __user *buf,
+static ssize_t tcpflowspy_read(struct file *file, char __user *buf,
         size_t len, loff_t *ppos)
 {
     int error = 0;
@@ -709,7 +709,7 @@ static ssize_t tcpflowprobe_read(struct file *file, char __user *buf,
             continue;
         }
 
-        width = tcpflowprobe_sprint(tbuf, sizeof(tbuf));
+        width = tcpflowspy_sprint(tbuf, sizeof(tbuf));
 
         if (width == 0){
             spin_unlock_bh(&tcp_flow_spy.lock);
@@ -761,10 +761,10 @@ static ssize_t tcpflowprobe_read(struct file *file, char __user *buf,
     return cnt == 0 ? error : cnt;
 }
 
-static const struct file_operations tcpflowprobe_fops = {
+static const struct file_operations tcpflowspy_fops = {
     .owner	 = THIS_MODULE,
-    .open	 = tcpflowprobe_open,
-    .read    = tcpflowprobe_read,
+    .open	 = tcpflowspy_open,
+    .read    = tcpflowspy_read,
 };
 
 #define EXPIRE_TIMEOUT (jiffies + HZ )
@@ -800,7 +800,7 @@ static void prune_timer(unsigned long data)
 }
 
 
-static __init int tcpflowprobe_init(void)
+static __init int tcpflowspy_init(void)
 {
     int ret = -ENOMEM;
     int i = 0;
@@ -824,7 +824,7 @@ static __init int tcpflowprobe_init(void)
     if(!initialize_hashtable(HASHTABLE_SIZE))
         goto err0;
 
-    if (!proc_net_fops_create(procname, S_IRUSR | S_IRGRP | S_IROTH, &tcpflowprobe_fops))
+    if (!proc_net_fops_create(procname, S_IRUSR | S_IRGRP | S_IROTH, &tcpflowspy_fops))
         goto err0;
 
     ret = register_jprobe(&tcp_recv_jprobe);
@@ -849,9 +849,9 @@ err0:
     kfree(tcp_flow_spy.available);
     return ret;
 }
-module_init(tcpflowprobe_init);
+module_init(tcpflowspy_init);
 
-static __exit void tcpflowprobe_exit(void)
+static __exit void tcpflowspy_exit(void)
 {
     int i = 0;
     if (timer_pending(&tcp_flow_spy.timer)) {
@@ -868,4 +868,4 @@ static __exit void tcpflowprobe_exit(void)
     }
     kfree(tcp_flow_spy.available);
 }
-module_exit(tcpflowprobe_exit);
+module_exit(tcpflowspy_exit);
