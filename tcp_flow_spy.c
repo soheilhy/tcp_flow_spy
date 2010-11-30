@@ -95,7 +95,9 @@ struct tcp_flow_log {
     u32 snd_cwnd_clamp;
     u32	ssthresh;
     u32	srtt;
+    u32 rttvar;
     u32 last_cwnd;
+    u32 rto; 
 
     int used;
 
@@ -296,7 +298,12 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
     const struct tcphdr* th = tcp_hdr(skb); 
     const struct iphdr* iph = ip_hdr(skb); 
 
-    spin_lock_bh(&tcp_flow_spy.lock);
+    if (!in_irq() && !irqs_disabled()) {
+        spin_lock_bh(&tcp_flow_spy.lock);
+    } else {
+        spin_lock(&tcp_flow_spy.lock);
+    }
+
     /* Only update if port matches */
     if ((port == 0 || ntohs(th->dest) == port ||
                 ntohs(th->source) == port)) {
@@ -370,6 +377,8 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
             p->snd_cwnd_clamp = tp->snd_cwnd_clamp; 
             p->ssthresh = tcp_current_ssthresh(sk);
             p->srtt = tp->srtt >> 3;
+            p->rto = inet_csk(sk)->icsk_rto;
+            p->rttvar = tp->rttvar; 
         }
 
         if (th->fin || th->rst) {
@@ -400,7 +409,12 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
     }
 
 ret:
-    spin_unlock_bh(&tcp_flow_spy.lock);
+    if (!in_irq() && !irqs_disabled()) {
+        spin_unlock_bh(&tcp_flow_spy.lock);
+    } else {
+        spin_unlock(&tcp_flow_spy.lock);
+    }
+
     jprobe_return();
     return 0;
 }
@@ -442,8 +456,11 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb) {
 #else
                 inet->daddr;
 #endif
-
-    spin_lock_bh(&tcp_flow_spy.lock);
+    if (!in_irq() && !irqs_disabled()) {
+        spin_lock_bh(&tcp_flow_spy.lock);
+    } else {
+        spin_lock(&tcp_flow_spy.lock);
+    }
     /* Only update if port matches */
     if ((port == 0 || ntohs(sport) == port ||
                 ntohs(dport) == port)) {
@@ -517,6 +534,8 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb) {
             p->snd_cwnd_clamp = tp->snd_cwnd_clamp; 
             p->ssthresh = tcp_current_ssthresh(sk);
             p->srtt = tp->srtt >> 3;
+            p->rto = inet_csk(sk)->icsk_rto;
+            p->rttvar = tp->rttvar;
         }
         if ( (tcb->flags & 
 #if SPY_COMPAT >= 35
@@ -557,7 +576,11 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb) {
         tcp_flow_spy.last_update = get_time();
     }
 ret:
-    spin_unlock_bh(&tcp_flow_spy.lock);
+    if (!in_irq() && !irqs_disabled()) {
+        spin_unlock_bh(&tcp_flow_spy.lock);
+    } else { 
+        spin_unlock(&tcp_flow_spy.lock);
+    }
     jprobe_return();
     return 0;
 }
@@ -656,7 +679,7 @@ static int tcpflowspy_sprint(char *tbuf, int n) {
 
 
     size = snprintf(tbuf, n,
-            "%lu.%09lu (%d) %x:%u %x:%u %lu.%09lu %u %lu %u %lu %u %u %u %u %u %u ",
+            "%lu.%09lu (%d) %x:%u %x:%u %lu.%09lu %u %lu %u %lu %u %u %u %u %u %u %u ",
             (unsigned long) tv.tv_sec,
             (unsigned long) tv.tv_nsec,
             finished,
@@ -670,7 +693,7 @@ static int tcpflowspy_sprint(char *tbuf, int n) {
             (unsigned long) p->snd_size,
             p->total_retransmissions, 
             p->out_of_order_packets, p->snd_cwnd_clamp,
-            p->ssthresh, p->srtt, p->last_cwnd
+            p->ssthresh, p->srtt, p->rto, p->last_cwnd
             );
 
     while (size < n-1 && index < number_of_buckets){
