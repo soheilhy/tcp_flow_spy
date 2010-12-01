@@ -134,7 +134,7 @@ static struct {
 
 static inline struct timespec get_time(void) {
     struct timespec ts;
-    ktime_get_ts(&ts);
+    ktime_get_real_ts(&ts);
     return ts;
 }
 
@@ -658,7 +658,7 @@ static int tcpflowspy_sprint(char *tbuf, int n) {
     tcp_flow_spy.storage[last_printed_flow_index].last_printed_tstamp = 
                                                                 get_time();
 
-    tv = tcpprobe_timespec_sub(p->last_packet_tstamp, tcp_flow_spy.start);
+    tv = p->last_packet_tstamp;
 
     duration = 
         tcpprobe_timespec_sub(p->last_packet_tstamp, p->first_packet_tstamp);
@@ -679,7 +679,7 @@ static int tcpflowspy_sprint(char *tbuf, int n) {
 
 
     size = snprintf(tbuf, n,
-            "%lu.%09lu (%d) %x:%u %x:%u %lu.%09lu %u %lu %u %lu %u %u %u %u %u %u %u ",
+            "%lu%09lu (%d) %x:%u %x:%u %lu.%09lu %u %lu %u %lu %u %u %u %u %u %u %u ",
             (unsigned long) tv.tv_sec,
             (unsigned long) tv.tv_nsec,
             finished,
