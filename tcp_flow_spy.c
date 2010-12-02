@@ -593,8 +593,7 @@ static struct jprobe tcp_transmit_jprobe = {
     .entry = (kprobe_opcode_t*) jtcp_transmit_skb,
 };
 
-static int tcpflowspy_open(struct inode * inode, struct file * file)
-{
+static int tcpflowspy_open(struct inode * inode, struct file * file) {
     /* Reset (empty) log */
     spin_lock_bh(&tcp_flow_spy.lock);
     tcp_flow_spy.start = get_time();
@@ -606,16 +605,31 @@ static int tcpflowspy_open(struct inode * inode, struct file * file)
     return 0;
 }
 
-static inline struct timespec tcpprobe_timespec_sub
-                                (struct timespec lhs, struct timespec rhs) {
-    struct timespec tv;
-    tv.tv_sec = lhs.tv_sec - rhs.tv_sec;
-    tv.tv_nsec = lhs.tv_nsec - rhs.tv_sec;
-    return tv;
+void tcpprobe_set_normalized_timespec(struct timespec *ts, time_t sec, long nsec) {
+    while (nsec >= NSEC_PER_SEC) {
+        nsec -= NSEC_PER_SEC;
+        ++sec;
+    }
+    while (nsec < 0) {
+        nsec += NSEC_PER_SEC;
+        --sec;
+    }
+    ts->tv_sec = sec;
+    ts->tv_nsec = nsec;
 }
 
+
+static inline struct timespec tcpprobe_timespec_sub(struct timespec lhs,
+        struct timespec rhs) {
+    struct timespec ts_delta;
+    tcpprobe_set_normalized_timespec(&ts_delta, lhs.tv_sec - rhs.tv_sec,
+            lhs.tv_nsec - rhs.tv_nsec);
+    return ts_delta;
+}
+
+
 static inline int tcpprobe_timespec_larger( struct timespec lhs, 
-                                            struct timespec rhs) {
+        struct timespec rhs) {
     int ret = lhs.tv_sec > rhs.tv_sec || 
         (lhs.tv_sec == rhs.tv_sec && lhs.tv_nsec > rhs.tv_nsec);
     return ret;
@@ -638,10 +652,10 @@ static int tcpflowspy_sprint(char *tbuf, int n) {
             if (tcp_flow_spy.storage[last_printed_flow_index].used && 
                     tcpprobe_timespec_larger( 
                         tcp_flow_spy.storage[last_printed_flow_index].
-                                last_packet_tstamp, 
+                        last_packet_tstamp, 
                         tcp_flow_spy.storage[last_printed_flow_index].
-                                last_printed_tstamp) 
-                ) {
+                        last_printed_tstamp) 
+               ) {
                 p = &tcp_flow_spy.storage[last_printed_flow_index];
                 break;
             }
@@ -656,7 +670,7 @@ static int tcpflowspy_sprint(char *tbuf, int n) {
     }
 
     tcp_flow_spy.storage[last_printed_flow_index].last_printed_tstamp = 
-                                                                get_time();
+        get_time();
 
     tv = p->last_packet_tstamp;
 
