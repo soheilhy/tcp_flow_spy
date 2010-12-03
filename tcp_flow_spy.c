@@ -65,9 +65,11 @@ static int bucket_length __read_mostly = 1;
 MODULE_PARM_DESC(bucket_length, "Length of each bucket in the histogram (1) except the last bucket length is not bounded.");
 module_param(bucket_length, int, 0);
 
-static int number_of_buckets  __read_mostly = 1;
-MODULE_PARM_DESC(number_of_buckets, "Number of buckets in the histogram (1)");
-module_param(number_of_buckets, int, 0);
+//static int number_of_buckets  __read_mostly = 1;
+//MODULE_PARM_DESC(number_of_buckets, "Number of buckets in the histogram (1)");
+//module_param(number_of_buckets, int, 0);
+
+#define NUMBER_OF_BUCKETS   10
 
 static int live __read_mostly = 0;
 MODULE_PARM_DESC(live, "(0) stats of completed flows are printed, (1) stats of live flows are printed.");
@@ -103,13 +105,14 @@ struct tcp_flow_log {
 
     int used;
 
+    u32 snd_cwnd_histogram[NUMBER_OF_BUCKETS];
+
     struct tcp_flow_log* used_thread_next;
     struct tcp_flow_log* used_thread_prev;
 
     struct tcp_flow_log* next;
     struct tcp_flow_log* prev;
 
-    u32* snd_cwnd_histogram;
 };
 
 static struct {
@@ -253,7 +256,7 @@ static inline void reinitialize_tcp_flow_log(struct tcp_flow_log* log,
     }
 
     memset(log, 0, sizeof(struct tcp_flow_log) - 4 * sizeof(u32*)); 
-    memset(log->snd_cwnd_histogram, 0, number_of_buckets * sizeof(u32)); 
+    //memset(log->snd_cwnd_histogram, 0, NUMBER_OF_BUCKETS * sizeof(u32)); 
 
     log->first_packet_tstamp = get_time();
 
@@ -364,7 +367,7 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
 
         if (sk->sk_state == TCP_ESTABLISHED) {
             int cwnd_index = tp->snd_cwnd / bucket_length;
-            cwnd_index = min(number_of_buckets - 1, cwnd_index);
+            cwnd_index = min(NUMBER_OF_BUCKETS - 1, cwnd_index);
             p->snd_cwnd_histogram[cwnd_index]++;
             p->last_cwnd = tp->snd_cwnd;
 
@@ -531,7 +534,7 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb) {
 
         if (sk->sk_state == TCP_ESTABLISHED) {
             int cwnd_index = tp->snd_cwnd / bucket_length;
-            cwnd_index = min(number_of_buckets - 1, cwnd_index);
+            cwnd_index = min(NUMBER_OF_BUCKETS - 1, cwnd_index);
             p->snd_cwnd_histogram[cwnd_index]++;
             p->last_cwnd = tp->snd_cwnd;
 
@@ -668,7 +671,7 @@ static int tcpflowspy_sprint(char *tbuf, int n) {
     struct tcp_flow_log *p = 0;
     struct timespec tv;
     int size = 0;
-    int index = 0;
+    //int index = 0;
     int finished = 0;
     struct timespec duration;
     if (!tcp_flow_spy.finished && live && tcp_flow_spy.used) {
@@ -710,7 +713,7 @@ static int tcpflowspy_sprint(char *tbuf, int n) {
 
 
 #ifdef TCP_FLOW_SPY_DEBUG
-    printk(KERN_DEBUG "%lu.%09lu %pI4:%u %pI4:%u %u %u %lu %lu %u %u %u %u\n",
+    printk(KERN_DEBUG "%lu.%09lu %pI4:%u %pI4:%u %u %u %lu %lu %u %u %u \n",
             (unsigned long) tv.tv_sec,
             (unsigned long) tv.tv_nsec,
             &p->saddr, ntohs(p->sport),
@@ -718,13 +721,13 @@ static int tcpflowspy_sprint(char *tbuf, int n) {
             p->recv_count, p->snd_count, 
             (unsigned long) p->recv_size, (unsigned long) p->snd_size,
             p->retrans_packets, p->snd_cwnd_clamp,
-            p->ssthresh, p->srtt 
+            p->ssthresh, p->srtt,
           );
 #endif
 
 
     size = snprintf(tbuf, n,
-            "%lu%09lu (%d) %x:%u %x:%u %lu.%09lu %u %lu %u %lu %u %u %u %u %u %u %u ",
+            "%lu%09lu (%d) %x:%u %x:%u %lu.%09lu %u %lu %u %lu %u %u %u %u %u %u %u %u,%u,%u,%u,%u,%u,%u,%u,%u,%u ",
             (unsigned long) tv.tv_sec,
             (unsigned long) tv.tv_nsec,
             finished,
@@ -738,13 +741,20 @@ static int tcpflowspy_sprint(char *tbuf, int n) {
             (unsigned long) p->snd_size,
             p->total_retransmissions, 
             p->out_of_order_packets, p->snd_cwnd_clamp,
-            p->ssthresh, p->srtt, p->rto, p->last_cwnd);
-
-    while (size < n-1 && index < number_of_buckets){
+            p->ssthresh, p->srtt, p->rto, p->last_cwnd,
+            // This crime is done only for the sake of performance :D
+            // This was dyanmic before :)) 
+            p->snd_cwnd_histogram[0], p->snd_cwnd_histogram[1],
+            p->snd_cwnd_histogram[2], p->snd_cwnd_histogram[3],
+            p->snd_cwnd_histogram[4], p->snd_cwnd_histogram[5],
+            p->snd_cwnd_histogram[6], p->snd_cwnd_histogram[7],
+            p->snd_cwnd_histogram[8], p->snd_cwnd_histogram[9]);
+/*
+    while (size < n-1 && index < NUMBER_OF_BUCKETS){
         size += min(n - size, snprintf(tbuf + size, n - size, "%u,",
                     p->snd_cwnd_histogram[index++]));
     }
-
+*/
     tbuf[min(n-1,size)] = ' ';
     if(size < n ){
         size++;
@@ -971,23 +981,23 @@ static __init int tcpflowspy_init(void) {
         int j  = 0;
         for (j = 0; j < MAX_CONTINOUS; j++) {
 
-            tcp_flow_spy.storage[i][j].snd_cwnd_histogram = 
-                kcalloc(number_of_buckets, sizeof(u32), GFP_KERNEL);
+/*            tcp_flow_spy.storage[i][j].snd_cwnd_histogram = 
+                kcalloc(NUMBER_OF_BUCKETS, sizeof(u32), GFP_KERNEL);
 
             if (!tcp_flow_spy.storage[i][j].snd_cwnd_histogram)
-                goto err2;
-        }
+                goto err2;*/
 
-        if (i != SECTION_COUNT - 1) {
-            tcp_flow_spy.storage[i][j].next = 
-                j < SECTION_COUNT - 1 ? 
-                &(tcp_flow_spy.storage[i][j+1]) : 
-                &(tcp_flow_spy.storage[i][0]);
-        } else {
-            tcp_flow_spy.storage[i][j].next = 
-                j < SECTION_COUNT - 1 ? 
-                &(tcp_flow_spy.storage[i][j+1]) : 
-                NULL;                
+            if (i != SECTION_COUNT - 1) {
+                tcp_flow_spy.storage[i][j].next = 
+                    j < SECTION_COUNT - 1 ? 
+                    &(tcp_flow_spy.storage[i][j+1]) : 
+                    &(tcp_flow_spy.storage[i][0]);
+            } else {
+                tcp_flow_spy.storage[i][j].next = 
+                    j < SECTION_COUNT - 1 ? 
+                    &(tcp_flow_spy.storage[i][j+1]) : 
+                    NULL;                
+            }
         }
     }
 
@@ -1003,12 +1013,12 @@ err1:
             procname);
 err2:
     for (i = 0; i < SECTION_COUNT; i++) {
-        int j  = 0;
-        for (j = 0; j < MAX_CONTINOUS; j++) {
+        //int j  = 0;
+/*        for (j = 0; j < MAX_CONTINOUS; j++) {
             if(tcp_flow_spy.storage[i][j].snd_cwnd_histogram) {
                 kfree(tcp_flow_spy.storage[i][j].snd_cwnd_histogram);
             }
-        }
+        }*/
         kfree(tcp_flow_spy.storage[i]);
     }
 err0:
@@ -1031,13 +1041,16 @@ static __exit void tcpflowspy_exit(void) {
     unregister_jprobe(&tcp_transmit_jprobe);
 
     for (i = 0; i < SECTION_COUNT; i++) {
-        int j  = 0;
+        /*int j  = 0;
         for (j = 0; j < MAX_CONTINOUS; j++) {
             if(tcp_flow_spy.storage[i][j].snd_cwnd_histogram) {
                 kfree(tcp_flow_spy.storage[i][j].snd_cwnd_histogram);
             }
-        }
+        }*/
         kfree(tcp_flow_spy.storage[i]);
     }
+
+    pr_info("TCP flow spy unregistered \n");
+ 
 }
 module_exit(tcpflowspy_exit);
