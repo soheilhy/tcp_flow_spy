@@ -75,6 +75,8 @@ static int live __read_mostly = 0;
 MODULE_PARM_DESC(live, "(0) stats of completed flows are printed, (1) stats of live flows are printed.");
 module_param(live, int, 0);
 
+static struct tcp_flow_log* last_printed_flow_log = NULL;
+
 static const char procname[] = "tcpflowspy";
 
 struct tcp_flow_log {
@@ -146,6 +148,52 @@ static inline struct timespec get_time(void) {
     ktime_get_real_ts(&ts);
     return ts;
 }
+static int live_count = 0;
+
+static inline void add_in_used(struct tcp_flow_log* log) {
+    if (unlikely(!log)) {
+        return;
+    }    
+    live_count++;
+    log->used = 1; 
+    log->used_thread_next = tcp_flow_spy.used;
+    log->used_thread_prev = NULL;
+
+    if (tcp_flow_spy.used) {
+        tcp_flow_spy.used->used_thread_prev = log; 
+    }    
+
+    tcp_flow_spy.used = log; 
+}
+
+static inline void remove_from_used(struct tcp_flow_log* log) {
+    if (unlikely(!log)) {
+        return;
+    } else {
+        struct tcp_flow_log* prev = log->used_thread_prev;
+        struct tcp_flow_log* next = log->used_thread_next;
+
+        if (last_printed_flow_log == log) {
+            last_printed_flow_log = 0;
+        }
+
+        if (prev) { 
+            prev->used_thread_next = next;
+        }    
+
+        if (next) {
+            next->used_thread_prev = prev;
+        }    
+
+        if (log == tcp_flow_spy.used) {
+            tcp_flow_spy.used = next;
+        }    
+
+
+        log->used_thread_next = log->used_thread_prev = NULL;
+    }
+}
+
 
 
 // Soheil: I could use inet hash function, but I prefer to have my own. 
@@ -255,7 +303,8 @@ static inline void reinitialize_tcp_flow_log(struct tcp_flow_log* log,
         return;
     }
 
-    memset(log, 0, sizeof(struct tcp_flow_log) - 4 * sizeof(u32*)); 
+    memset(log, 0, 
+            sizeof(struct tcp_flow_log) - 4 * sizeof(struct tcp_flow_log*)); 
     //memset(log->snd_cwnd_histogram, 0, NUMBER_OF_BUCKETS * sizeof(u32)); 
 
     log->first_packet_tstamp = get_time();
@@ -294,7 +343,7 @@ static inline struct hashtable_entry* initialize_hashtable(u32 size) {
 }
 
 static inline int tcp_flow_log_avail(void) {
-    return tcp_flow_spy.available != 0;
+   return tcp_flow_spy.available != 0;
 }
 
 /*
@@ -333,17 +382,14 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
                         ntohs(th->source));
 #endif
                 p = tcp_flow_spy.available;
+                if (p->used) {
+                    printk ("ERROR21 %p\n", p);
+                }
                 tcp_flow_spy.available = tcp_flow_spy.available->next;
                 reinitialize_tcp_flow_log(p, iph->saddr, iph->daddr, 
                         th->source, th->dest);
-                p->used = 1;
-                p->used_thread_next = tcp_flow_spy.used;
-                p->used_thread_prev = NULL;
-                if (p->used_thread_next) { 
-                    tcp_flow_spy.used->used_thread_prev = p;
-                }
 
-                tcp_flow_spy.used = p;
+                add_in_used(p);
             }else{
                 goto ret;
             }
@@ -385,24 +431,14 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
         }
 
         if (th->fin || th->rst) {
-            struct tcp_flow_log* next = p->used_thread_next;
-            struct tcp_flow_log* prev = p->used_thread_prev;
-            if (next) {
-                next->prev = prev;
-            }
 
-            if (prev) {
-                prev->next = next;
-            }
-
-            if (p == tcp_flow_spy.used) {
-                tcp_flow_spy.used = p->next;
-            }
+            remove_from_used(p);
 
             remove_from_hashtable(iph->saddr, iph->daddr, th->source, th->dest);
 
             p->next = tcp_flow_spy.finished;
             tcp_flow_spy.finished = p;
+            
 #ifdef TCP_FLOW_SPY_DEBUG
             printk(KERN_ERR "finished %d -> %d \n", 
                     tcp_flow_spy.finished, 
@@ -505,18 +541,16 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb) {
                         ntohs(sport));
 #endif
                 p = tcp_flow_spy.available;
-                tcp_flow_spy.available = tcp_flow_spy.available->next;
-
-                p->used_thread_next = tcp_flow_spy.used;
-                p->used_thread_prev = NULL;
-                if (p->used_thread_next) { 
-                    tcp_flow_spy.used->used_thread_prev = p;
+                if (p->used) {
+                    printk ("ERROR22 %p\n", p);
                 }
 
-                tcp_flow_spy.used = p;
+                tcp_flow_spy.available = tcp_flow_spy.available->next;
 
                 reinitialize_tcp_flow_log(p,saddr, daddr, sport, dport);
-                p->used = 1;
+                
+                add_in_used(p);
+
             } else {
                 goto ret;
             }
@@ -566,20 +600,8 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb) {
 #endif
                  
                  ) ) {
-            struct tcp_flow_log* next = p->used_thread_next;
-            struct tcp_flow_log* prev = p->used_thread_prev;
 
-            if (p == tcp_flow_spy.used) {
-                tcp_flow_spy.used = p->next;
-            }
-
-            if (next) {
-                next->prev = prev;
-            }
-
-            if (prev) {
-                prev->next = next;
-            }
+            remove_from_used(p);
 
             remove_from_hashtable(saddr, daddr, sport, dport);
 
@@ -665,7 +687,6 @@ static inline int tcpprobe_timespec_larger( struct timespec lhs,
 }
 
 
-static struct tcp_flow_log* last_printed_flow_log = NULL;
 
 static int tcpflowspy_sprint(char *tbuf, int n) {
     struct tcp_flow_log *p = 0;
@@ -673,19 +694,23 @@ static int tcpflowspy_sprint(char *tbuf, int n) {
     int size = 0;
     //int index = 0;
     int finished = 0;
+    int count = 0;
     struct timespec duration;
     if (!tcp_flow_spy.finished && live && tcp_flow_spy.used) {
-        struct tcp_flow_log* previous_last_printed_flow_log = 
-                                                    last_printed_flow_log;
+        struct tcp_flow_log* previous_last_printed_flow_log;
+ 
+        if (last_printed_flow_log == NULL) {
+            last_printed_flow_log = tcp_flow_spy.used;
+        }
+
+        previous_last_printed_flow_log = last_printed_flow_log;
         do {
-            
             if (last_printed_flow_log == NULL || 
-                    last_printed_flow_log->next == NULL) {
+                    last_printed_flow_log->used_thread_next == NULL) {
                 last_printed_flow_log = tcp_flow_spy.used;
             } else {
                 last_printed_flow_log = last_printed_flow_log->used_thread_next;
             }
-
             if ( last_printed_flow_log != NULL && 
                     tcpprobe_timespec_larger( 
                         last_printed_flow_log->last_packet_tstamp, 
@@ -694,7 +719,11 @@ static int tcpflowspy_sprint(char *tbuf, int n) {
                 p = last_printed_flow_log;
                 break;
             }
-        } while (!p && last_printed_flow_log != previous_last_printed_flow_log);
+        } while (!p && last_printed_flow_log != previous_last_printed_flow_log 
+                && ++count < bufsize + 1);
+        if (count >= bufsize + 1) {
+            pr_info("SPY ERROR\n");
+        }
     } else {
         finished = 1;
         p = tcp_flow_spy.finished;
@@ -825,8 +854,11 @@ static ssize_t tcpflowspy_read(struct file *file, char __user *buf,
                 tcp_flow_spy.used->used_thread_prev = NULL;
             }*/
             newly_printed->next = tcp_flow_spy.available;
+
             tcp_flow_spy.available = newly_printed;
             newly_printed->used = 0;
+            live_count--;
+
 #ifdef TCP_FLOW_SPY_DEBUG
             printk(KERN_ERR "Available %d\n", tcp_flow_spy.available);
 #endif
@@ -874,8 +906,10 @@ static const struct file_operations tcpflowspy_fops = {
 #define EXPIRE_SKB (2*60)
 static void prune_timer(unsigned long data) {
     int i;
+    int count = 0;
     struct timespec now = get_time(); 
     spin_lock_bh(&tcp_flow_spy.lock);
+    
     for (i = 0; i < HASHTABLE_SIZE; i++) {
         struct hashtable_entry* entry = &tcp_flow_hashtable.entries[i];
         struct tcp_flow_log* log = 0;
@@ -889,20 +923,10 @@ static void prune_timer(unsigned long data) {
             struct timespec interval
                 = tcpprobe_timespec_sub(now, log->last_packet_tstamp);
             struct tcp_flow_log* nextLog = log->next;
+            count++;
             if (interval.tv_sec > EXPIRE_SKB) {
-                struct tcp_flow_log* next = log->used_thread_next;
-                struct tcp_flow_log* prev = log->used_thread_prev;
-                if (next) {
-                    next->prev = prev;
-                }
 
-                if (prev) {
-                    prev->next = next;
-                }
-
-                if (log == tcp_flow_spy.used) {
-                    tcp_flow_spy.used = log->next;
-                }
+                remove_from_used(log);
 
                 remove_from_hashentry(entry, log); 
                 log->next = tcp_flow_spy.finished;
@@ -911,7 +935,6 @@ static void prune_timer(unsigned long data) {
             log = nextLog;
         }
     }
-
     tcp_flow_spy.timer.expires = EXPIRE_TIMEOUT;
     spin_unlock_bh(&tcp_flow_spy.lock);
     add_timer(&tcp_flow_spy.timer);
@@ -953,7 +976,8 @@ static __init int tcpflowspy_init(void) {
     }
 
     tcp_flow_spy.available = tcp_flow_spy.storage[0]; 
-    tcp_flow_spy.finished = 0;
+    tcp_flow_spy.finished = NULL;
+    tcp_flow_spy.used = NULL;
 
     setup_timer(&tcp_flow_spy.timer, prune_timer, 0);
     tcp_flow_spy.timer.expires = EXPIRE_TIMEOUT;
@@ -986,15 +1010,14 @@ static __init int tcpflowspy_init(void) {
 
             if (!tcp_flow_spy.storage[i][j].snd_cwnd_histogram)
                 goto err2;*/
-
             if (i != SECTION_COUNT - 1) {
                 tcp_flow_spy.storage[i][j].next = 
-                    j < SECTION_COUNT - 1 ? 
+                    j < MAX_CONTINOUS - 1 ? 
                     &(tcp_flow_spy.storage[i][j+1]) : 
-                    &(tcp_flow_spy.storage[i][0]);
+                    &(tcp_flow_spy.storage[i+1][0]);
             } else {
                 tcp_flow_spy.storage[i][j].next = 
-                    j < SECTION_COUNT - 1 ? 
+                    j < MAX_CONTINOUS - 1 ? 
                     &(tcp_flow_spy.storage[i][j+1]) : 
                     NULL;                
             }
