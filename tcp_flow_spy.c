@@ -383,7 +383,7 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
 #endif
                 p = tcp_flow_spy.available;
                 if (p->used) {
-                    printk ("ERROR21 %p\n", p);
+                    pr_info ("ERROR21 %p\n", p);
                 }
                 tcp_flow_spy.available = tcp_flow_spy.available->next;
                 reinitialize_tcp_flow_log(p, iph->saddr, iph->daddr, 
@@ -542,7 +542,7 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb) {
 #endif
                 p = tcp_flow_spy.available;
                 if (p->used) {
-                    printk ("ERROR22 %p\n", p);
+                    pr_info ("ERROR22 %p\n", p);
                 }
 
                 tcp_flow_spy.available = tcp_flow_spy.available->next;
