@@ -37,10 +37,12 @@
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19))
 #define SPY_COMPAT 18
-#elif (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,35))
+#elif (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,34))
 #define SPY_COMPAT 32
-#else
-#define SPY_COMPAT 35
+#elif (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,35))
+#define SPY_COMPAT 34
+#else 
+#define SPY_COMPAT 35 
 #endif
 
 #define HASHSIZE_COEF 1
@@ -485,26 +487,26 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb) {
 
     struct tcp_skb_cb *tcb = TCP_SKB_CB(skb);
     __be16  sport = 
-#if SPY_COMPAT >= 35
+#if SPY_COMPAT >= 34
                 inet->inet_sport,
 #else
                 inet->sport,
 #endif
             dport = 
-#if SPY_COMPAT >= 35
+#if SPY_COMPAT >= 34
                 inet->inet_dport;
 #else
                 inet->dport;
 #endif
 
     __be32  saddr = 
-#if SPY_COMPAT >= 35
+#if SPY_COMPAT >= 34
                 inet->inet_saddr,
 #else
                 inet->saddr,
 #endif
             daddr =
-#if SPY_COMPAT >= 35
+#if SPY_COMPAT >= 34
                 inet->inet_daddr;
 #else
                 inet->daddr;
