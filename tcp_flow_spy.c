@@ -904,28 +904,26 @@ static const struct file_operations tcpflowspy_fops = {
     .read    = tcpflowspy_read,
 };
 
-#define EXPIRE_TIMEOUT (jiffies + HZ )
 #define EXPIRE_SKB (2*60)
+#define EXPIRE_TIMEOUT (jiffies + EXPIRE_SKB*HZ )
 static void prune_timer(unsigned long data) {
     int i;
-    int count = 0;
     struct timespec now = get_time(); 
-    spin_lock_bh(&tcp_flow_spy.lock);
-    
     for (i = 0; i < HASHTABLE_SIZE; i++) {
         struct hashtable_entry* entry = &tcp_flow_hashtable.entries[i];
         struct tcp_flow_log* log = 0;
+        int count = 0;
 
     	if (unlikely(!entry)) {
 	        continue;
 	    }
 
+        spin_lock_bh(&tcp_flow_spy.lock);
         log = entry->head;
-        while (log) {
+        while (log && count <= bufsize + 1) {
             struct timespec interval
                 = tcpprobe_timespec_sub(now, log->last_packet_tstamp);
             struct tcp_flow_log* nextLog = log->next;
-            count++;
             if (interval.tv_sec > EXPIRE_SKB) {
 
                 remove_from_used(log);
@@ -935,10 +933,14 @@ static void prune_timer(unsigned long data) {
                 tcp_flow_spy.finished = log;
             }
             log = nextLog;
+            count++;
         }
+        if (count > bufsize + 1) {
+            pr_info("SPY Hash Error \n");
+        }
+        spin_unlock_bh(&tcp_flow_spy.lock);
     }
     tcp_flow_spy.timer.expires = EXPIRE_TIMEOUT;
-    spin_unlock_bh(&tcp_flow_spy.lock);
     add_timer(&tcp_flow_spy.timer);
 }
 
