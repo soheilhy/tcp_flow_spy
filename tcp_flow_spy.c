@@ -722,10 +722,10 @@ static int tcpflowspy_sprint(char *tbuf, int n) {
                 break;
             }
         } while (!p && last_printed_flow_log != previous_last_printed_flow_log 
-                && ++count < bufsize + 1);
-        if (count >= bufsize + 1) {
-            pr_info("SPY ERROR\n");
-        }
+                && ++count < MAX_CONTINOUS);
+//        if (count >= bufsize + 1) {
+//            pr_info("SPY ERROR\n");
+//        }
     } else {
         finished = 1;
         p = tcp_flow_spy.finished;
@@ -920,7 +920,7 @@ static void prune_timer(unsigned long data) {
 
         spin_lock_bh(&tcp_flow_spy.lock);
         log = entry->head;
-        while (log && count <= bufsize + 1) {
+        while (log && count <= MAX_CONTINOUS) {
             struct timespec interval
                 = tcpprobe_timespec_sub(now, log->last_packet_tstamp);
             struct tcp_flow_log* nextLog = log->next;
@@ -935,9 +935,9 @@ static void prune_timer(unsigned long data) {
             log = nextLog;
             count++;
         }
-        if (count > bufsize + 1) {
-            pr_info("SPY Hash Error \n");
-        }
+//        if (count > bufsize + 1) {
+//            pr_info("SPY Hash Error \n");
+//        }
         spin_unlock_bh(&tcp_flow_spy.lock);
     }
     tcp_flow_spy.timer.expires = EXPIRE_TIMEOUT;
