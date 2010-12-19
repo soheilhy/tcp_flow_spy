@@ -356,6 +356,7 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
     const struct tcphdr* th = tcp_hdr(skb); 
     const struct iphdr* iph = ip_hdr(skb); 
     unsigned long flags;
+    int wakeup = 0;
 
     spin_lock_irqsave(&tcp_flow_spy.lock, flags);
 
@@ -441,7 +442,7 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
                     tcp_flow_spy.finished, 
                     tcp_flow_spy.finished->next);
 #endif
-            wake_up(&tcp_flow_spy.wait);
+            wakeup = 1;
             
 #ifdef TCP_FLOW_SPY_DEBUG
             printk(KERN_DEBUG 
@@ -452,7 +453,7 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
 #endif
 
         } else if (live) {
-             wake_up(&tcp_flow_spy.wait);
+            wakeup = 1;
         }
 
         tcp_flow_spy.last_update = get_time();
@@ -460,6 +461,10 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
 
 ret:
     spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
+
+    if (likely(wakeup)) {
+        wake_up(&tcp_flow_spy.wait);
+    }
 
     jprobe_return();
     return 0;
@@ -476,6 +481,7 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb) {
     const struct tcp_sock *tp = tcp_sk(sk);
     const struct inet_sock *inet = inet_sk(sk);
     unsigned long flags;
+    int wakeup = 0;
 
     struct tcp_skb_cb *tcb = TCP_SKB_CB(skb);
     __be16  sport = 
@@ -603,22 +609,26 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb) {
                     tcp_flow_spy.finished, 
                     tcp_flow_spy.finished->next);
 #endif
-            wake_up(&tcp_flow_spy.wait);
-            
+            wakeup = 1;
 #ifdef TCP_FLOW_SPY_DEBUG
             printk(KERN_DEBUG 
                     "Finished ip_src %u, src_port %u, finished logs %lX\n", 
                     ((saddr >> 24) & 0xff), sport, tcp_flow_spy.finished); 
 #endif
-
+            
         } else if (live) {
-             wake_up(&tcp_flow_spy.wait);
+            wakeup = 1;
         }
 
         tcp_flow_spy.last_update = get_time();
     }
 ret:
     spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
+    
+    if (likely(wakeup)) {
+        wake_up(&tcp_flow_spy.wait);
+    }
+
     jprobe_return();
     return 0;
 }
