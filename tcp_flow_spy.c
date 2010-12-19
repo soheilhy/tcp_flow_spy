@@ -358,11 +358,7 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
     const struct iphdr* iph = ip_hdr(skb); 
     unsigned long flags;
 
-//    if (!in_irq() && !irqs_disabled()) {
-        spin_lock_irqsave(&tcp_flow_spy.lock, flags);
-//    } else {
-//        spin_lock(&tcp_flow_spy.lock);
-//    }
+    spin_lock_irqsave(&tcp_flow_spy.lock, flags);
 
     /* Only update if port matches */
     if ((port == 0 || ntohs(th->dest) == port ||
@@ -464,11 +460,7 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
     }
 
 ret:
-//    if (!in_irq() && !irqs_disabled()) {
-        spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
-//    } else {
-//        spin_unlock(&tcp_flow_spy.lock);
-//    }
+    spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
 
     jprobe_return();
     return 0;
@@ -512,11 +504,8 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb) {
 #else
                 inet->daddr;
 #endif
-//    if (!in_irq() && !irqs_disabled()) {
-        spin_lock_irqsave(&tcp_flow_spy.lock, flags);
-//    } else {
-//        spin_lock(&tcp_flow_spy.lock);
-//    }
+    spin_lock_irqsave(&tcp_flow_spy.lock, flags);
+    
     /* Only update if port matches */
     if ((port == 0 || ntohs(sport) == port ||
                 ntohs(dport) == port)) {
@@ -630,11 +619,7 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb) {
         tcp_flow_spy.last_update = get_time();
     }
 ret:
-//    if (!in_irq() && !irqs_disabled()) {
-        spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
-//    } else { 
-//        spin_unlock(&tcp_flow_spy.lock);
-//    }
+    spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
     jprobe_return();
     return 0;
 }
