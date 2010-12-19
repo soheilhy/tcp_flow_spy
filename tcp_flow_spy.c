@@ -29,7 +29,6 @@
 #include <linux/module.h>
 #include <linux/time.h>
 #include <linux/ktime.h>
-#include <linux/timer.h>
 
 #include <net/tcp.h>
 
@@ -1000,7 +999,6 @@ static __init int tcpflowspy_init(void) {
 
 
     pr_info("TCP flow spy registered (port=%d) bufsize=%u\n", port, bufsize);
-    //add_timer(&tcp_flow_spy.timer);
     return 0;
 err1:
     proc_net_remove(
@@ -1010,12 +1008,6 @@ err1:
             procname);
 err2:
     for (i = 0; i < SECTION_COUNT; i++) {
-        //int j  = 0;
-/*        for (j = 0; j < MAX_CONTINOUS; j++) {
-            if(tcp_flow_spy.storage[i][j].snd_cwnd_histogram) {
-                kfree(tcp_flow_spy.storage[i][j].snd_cwnd_histogram);
-            }
-        }*/
         kfree(tcp_flow_spy.storage[i]);
     }
 err0:
@@ -1025,9 +1017,6 @@ module_init(tcpflowspy_init);
 
 static __exit void tcpflowspy_exit(void) {
     int i = 0;
-/*  if (timer_pending(&tcp_flow_spy.timer)) {
-        del_timer(&tcp_flow_spy.timer);
-    }*/
 
     proc_net_remove(
 #if SPY_COMPAT >= 32
@@ -1038,12 +1027,6 @@ static __exit void tcpflowspy_exit(void) {
     unregister_jprobe(&tcp_transmit_jprobe);
 
     for (i = 0; i < SECTION_COUNT; i++) {
-        /*int j  = 0;
-        for (j = 0; j < MAX_CONTINOUS; j++) {
-            if(tcp_flow_spy.storage[i][j].snd_cwnd_histogram) {
-                kfree(tcp_flow_spy.storage[i][j].snd_cwnd_histogram);
-            }
-        }*/
         kfree(tcp_flow_spy.storage[i]);
     }
 
