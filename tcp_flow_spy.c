@@ -751,8 +751,6 @@ static int tcpflowspy_sprint(char *tbuf, int n) {
 
                 tcp_flow_spy.last_read = tcp_flow_spy.last_update;
                 tcp_flow_spy.last_read.tv_sec--;
-//                pr_info("looping %p %lu %d\n", 
-//                        last_printed_flow_log, expiration_time.tv_sec, count);
             }
         } while (0);
         //(!p && last_printed_flow_log != previous_last_printed_flow_log 
