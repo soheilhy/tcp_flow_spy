@@ -148,13 +148,11 @@ static inline struct timespec get_time(void) {
     ktime_get_real_ts(&ts);
     return ts;
 }
-static int live_count = 0;
 
 static inline void add_in_used(struct tcp_flow_log* log) {
     if (unlikely(!log)) {
         return;
     }    
-    live_count++;
     log->used = 1; 
     log->used_thread_next = tcp_flow_spy.used;
     log->used_thread_prev = NULL;
@@ -380,9 +378,11 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
                         ntohs(th->source));
 #endif
                 p = tcp_flow_spy.available;
+#ifdef TCP_FLOW_SPY_DEBUG
                 if (p->used) {
                     pr_info ("ERROR21 %p\n", p);
                 }
+#endif
                 tcp_flow_spy.available = tcp_flow_spy.available->next;
                 reinitialize_tcp_flow_log(p, iph->saddr, iph->daddr, 
                         th->source, th->dest);
@@ -455,15 +455,17 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
         } else if (live) {
             wakeup = 1;
         }
-
-        tcp_flow_spy.last_update = get_time();
+        
+        if (likely(wakeup)){
+            tcp_flow_spy.last_update = get_time();
+        }
     }
 
 ret:
     spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
 
     if (likely(wakeup)) {
-        wake_up(&tcp_flow_spy.wait);
+        wake_up_interruptible(&tcp_flow_spy.wait);
     }
 
     jprobe_return();
@@ -538,10 +540,11 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb) {
                         ntohs(sport));
 #endif
                 p = tcp_flow_spy.available;
+#ifdef TCP_FLOW_SPY_DEBUG
                 if (p->used) {
                     pr_info ("ERROR22 %p\n", p);
                 }
-
+#endif
                 tcp_flow_spy.available = tcp_flow_spy.available->next;
 
                 reinitialize_tcp_flow_log(p,saddr, daddr, sport, dport);
@@ -620,13 +623,15 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb) {
             wakeup = 1;
         }
 
-        tcp_flow_spy.last_update = get_time();
+        if (likely(wakeup)) {
+            tcp_flow_spy.last_update = get_time();
+        }
     }
 ret:
     spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
     
     if (likely(wakeup)) {
-        wake_up(&tcp_flow_spy.wait);
+        wake_up_interruptible(&tcp_flow_spy.wait);
     }
 
     jprobe_return();
@@ -691,7 +696,6 @@ static int tcpflowspy_sprint(char *tbuf, int n) {
     int size = 0;
     //int index = 0;
     int finished = 0;
-    int count = 0;
     struct timespec expiration_time = get_time(); 
     struct timespec duration; 
 
@@ -716,7 +720,7 @@ static int tcpflowspy_sprint(char *tbuf, int n) {
                 last_printed_flow_log = last_printed_flow_log->used_thread_next;
             }
 
-            if ( last_printed_flow_log != NULL) {
+            if (last_printed_flow_log != NULL) {
                 if ( tcpprobe_timespec_larger(
                             expiration_time,
                             last_printed_flow_log->last_packet_tstamp)
@@ -724,6 +728,9 @@ static int tcpflowspy_sprint(char *tbuf, int n) {
                     finished = 1;
 
                     p = last_printed_flow_log; 
+                    
+                    last_printed_flow_log = 
+                        last_printed_flow_log->used_thread_next;
 
                     remove_from_used(p);
                     remove_from_hashtable
@@ -731,7 +738,6 @@ static int tcpflowspy_sprint(char *tbuf, int n) {
                     
                     p->next = tcp_flow_spy.finished;
                     tcp_flow_spy.finished = p;
-
                     break;
                 }
 
@@ -742,9 +748,15 @@ static int tcpflowspy_sprint(char *tbuf, int n) {
                     p = last_printed_flow_log;
                     break;
                 }
+
+                tcp_flow_spy.last_read = tcp_flow_spy.last_update;
+                tcp_flow_spy.last_read.tv_sec--;
+//                pr_info("looping %p %lu %d\n", 
+//                        last_printed_flow_log, expiration_time.tv_sec, count);
             }
-        } while (!p && last_printed_flow_log != previous_last_printed_flow_log 
-                && ++count < MAX_CONTINOUS);
+        } while (0);
+        //(!p && last_printed_flow_log != previous_last_printed_flow_log 
+        //        && ++count < MAX_CONTINOUS);
 //        if (count >= bufsize + 1) {
 //            pr_info("SPY ERROR\n");
 //        }
@@ -778,9 +790,8 @@ static int tcpflowspy_sprint(char *tbuf, int n) {
           );
 #endif
 
-
     size = snprintf(tbuf, n,
-            "%lu%09lu (%d) %x:%u %x:%u %lu.%09lu %u %lu %u %lu %u %u %u %u %u %u %u %u,%u,%u,%u,%u,%u,%u,%u,%u,%u ",
+            "%lu%09lu (%d) %x:%u %x:%u %lu.%09lu %u %lu %u %lu %u %u %u %u %u %u %u %u,%u,%u,%u,%u,%u,%u,%u,%u,%u \n",
             (unsigned long) tv.tv_sec,
             (unsigned long) tv.tv_nsec,
             finished,
@@ -802,22 +813,6 @@ static int tcpflowspy_sprint(char *tbuf, int n) {
             p->snd_cwnd_histogram[4], p->snd_cwnd_histogram[5],
             p->snd_cwnd_histogram[6], p->snd_cwnd_histogram[7],
             p->snd_cwnd_histogram[8], p->snd_cwnd_histogram[9]);
-/*
-    while (size < n-1 && index < NUMBER_OF_BUCKETS){
-        size += min(n - size, snprintf(tbuf + size, n - size, "%u,",
-                    p->snd_cwnd_histogram[index++]));
-    }
-*/
-    tbuf[min(n-1,size)] = ' ';
-    if(size < n ){
-        size++;
-    }
-
-    tbuf[min(n-1,size)] = '\n';
-    
-    if(size < n){
-        size++;
-    }
 ret:
     return size;
 }
@@ -882,7 +877,6 @@ static ssize_t tcpflowspy_read(struct file *file, char __user *buf,
 
             tcp_flow_spy.available = newly_printed;
             newly_printed->used = 0;
-            live_count--;
 
 #ifdef TCP_FLOW_SPY_DEBUG
             printk(KERN_ERR "Available %d\n", tcp_flow_spy.available);
