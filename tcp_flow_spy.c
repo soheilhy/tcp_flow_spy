@@ -1,8 +1,10 @@
 /*
  * tcpflowspy - Observe the TCP flow summerized information with kprobes.
- *
+ *  
+ * This module is based on tcpflowprobe:
  * The idea for this came from Werner Almesberger's umlsim
  * Copyright (C) 2004, Stephen Hemminger <shemminger@osdl.org>
+ *
  * Copyright (C) 2010, Soheil Hassas Yeganeh <soheil@cs.toronto.edu>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -44,13 +46,13 @@
 #define SPY_COMPAT 35 
 #endif
 
-#define HASHSIZE_COEF 1
+#define HASHSIZE_COEF 2
 #define HASHTABLE_SIZE (HASHSIZE_COEF*bufsize)
 #define MAX_CONTINOUS 128
 #define SECTION_COUNT (bufsize/MAX_CONTINOUS)
 
-MODULE_AUTHOR("Stephen Hemminger <shemminger@linux-foundation.org>, Soheil Hassas Yeganeh <soheil@cs.toronto.edu>");
-MODULE_DESCRIPTION("TCP cwnd snooper");
+MODULE_AUTHOR("Soheil Hassas Yeganeh <soheil@cs.toronto.edu>");
+MODULE_DESCRIPTION("TCP flow snooper");
 MODULE_LICENSE("GPL");
 MODULE_VERSION("0.1-ALPHA");
 
@@ -200,14 +202,8 @@ static inline void remove_from_used(struct tcp_flow_log* log) {
 static inline u32 skb_hash_function(__be32 saddr, __be32 daddr, 
                                     __be16 sport, __be16 dport) {
         u32 hash = 
-            (((saddr >> 24) & 0xff) + ((daddr >> 24) & 0xff) + dport + sport) 
-                % HASHTABLE_SIZE;
-
-#ifdef TCP_FLOW_SPY_DEBUG
-        printk(KERN_DEBUG "Hashcode %u, ip_src %u, src_port %u", 
-                hash, 
-                ((saddr >> 24) & 0xff), ntohs(sport)); 
-#endif
+            (ntohs(dport) + ntohs(sport)) % HASHTABLE_SIZE;
+    
         return hash;
 }
 
@@ -234,17 +230,19 @@ static inline struct tcp_flow_log* find_flow_log_for_skb(__be32 saddr,
     struct hashtable_entry* entry = 
         get_entry_for_skb(saddr, daddr, sport, dport);
     struct tcp_flow_log* log_element;
+    int count = 0;
+
     if (unlikely(!entry)) {
         return 0;
     }
 
     log_element = entry->head;
 
-    while (log_element) {
+    while (log_element && count++ < bufsize) {
         if (is_log_for_skb(log_element, saddr, daddr, sport, dport)) {
             goto ret;
         }
-
+        count++;
         log_element = log_element->next;
     }
 
@@ -364,19 +362,20 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
     /* Only update if port matches */
     if ((port == 0 || ntohs(th->dest) == port ||
                 ntohs(th->source) == port)) {
-
-        spin_lock_irqsave(&tcp_flow_spy.lock, flags);
         
-        struct tcp_flow_log* p = 
-            find_flow_log_for_skb(iph->saddr, iph->daddr, th->source, th->dest);
+        struct tcp_flow_log* p = NULL;
+        
+        spin_lock_irqsave(&tcp_flow_spy.lock, flags);
+        p = find_flow_log_for_skb(iph->saddr, iph->daddr, th->source, th->dest);
 
         if (unlikely(!p)) {
             if (!th->syn) {
-                goto ret;
+                goto retunlock;
             }
             
             /* If log fills, just silently drop */
             if (tcp_flow_log_avail()) {
+
 #ifdef TCP_FLOW_SPY_DEBUG
                 printk ( KERN_ERR " available %d -> %d for src_port %u \n", 
                         tcp_flow_spy.available, tcp_flow_spy.available->next, 
@@ -393,9 +392,14 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
                         th->source, th->dest);
 
                 add_in_used(p);
+
             }else{
-                goto ret;
+                goto retunlock;
             }
+            p->saddr = iph->saddr;
+            p->sport = th->source;
+            p->daddr = iph->daddr;
+            p->dport = th->dest;
 
         }
 
@@ -403,10 +407,6 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
 
         p->last_packet_tstamp = get_time();
 
-        p->saddr = iph->saddr;
-        p->sport = th->source;
-        p->daddr = iph->daddr;
-        p->dport = th->dest;
 
         p->recv_count++;
         p->recv_size += skb->len; 
@@ -434,9 +434,10 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
             p->rto = inet_csk(sk)->icsk_rto;
             p->rttvar = tp->rttvar; 
         }
+        
 
         if (th->fin || th->rst) {
-
+            spin_lock_irqsave(&tcp_flow_spy.lock, flags);
             remove_from_used(p);
 
             remove_from_hashtable(iph->saddr, iph->daddr, th->source, th->dest);
@@ -444,21 +445,10 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
             p->next = tcp_flow_spy.finished;
             tcp_flow_spy.finished = p;
             
-#ifdef TCP_FLOW_SPY_DEBUG
-            printk(KERN_ERR "finished %d -> %d \n", 
-                    tcp_flow_spy.finished, 
-                    tcp_flow_spy.finished->next);
-#endif
+            spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
+
             wakeup = 1;
             
-#ifdef TCP_FLOW_SPY_DEBUG
-            printk(KERN_DEBUG 
-                    "Finished ip_src %u, src_port %u, finished logs %lX\n", 
-                    ((iph->saddr >> 24) & 0xff), 
-                    ntohs(th->source), 
-                    tcp_flow_spy.finished); 
-#endif
-
         } else if (live) {
             wakeup = 1;
         }
@@ -468,12 +458,17 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
         }
     }
 
+    goto ret;
+    
+retunlock:
+    spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
+
 ret:
 
     if (likely(wakeup)) {
         wake_up_interruptible(&tcp_flow_spy.wait);
     }
-
+    
     jprobe_return();
     return 0;
 }
@@ -517,14 +512,15 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb) {
 #else
                 inet->daddr;
 #endif
-    spin_lock_irqsave(&tcp_flow_spy.lock, flags);
     
     /* Only update if port matches */
     if ((port == 0 || ntohs(sport) == port ||
                 ntohs(dport) == port)) {
 
-        struct tcp_flow_log* p = 
-            find_flow_log_for_skb(saddr, daddr, sport, dport);
+        struct tcp_flow_log* p = NULL; 
+        spin_lock_irqsave(&tcp_flow_spy.lock, flags);
+
+        p = find_flow_log_for_skb(saddr, daddr, sport, dport);
 
         if (unlikely(!p)) {
             if (!(tcb->flags & 
@@ -534,37 +530,27 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb) {
                         TCPCB_FLAG_SYN
 #endif
                         )) {
-                goto ret;
+                goto retunlock;
             }
 
             /* If log fills, just silently drop */
             if (tcp_flow_log_avail()) {
-#ifdef TCP_FLOW_SPY_DEBUG
-                printk ( KERN_ERR " available %d -> %d for src_port %u \n", 
-                        tcp_flow_spy.available, 
-                        tcp_flow_spy.available->next, 
-                        ntohs(sport));
-#endif
+                
                 p = tcp_flow_spy.available;
-#ifdef TCP_FLOW_SPY_DEBUG
-                if (p->used) {
-                    pr_info ("ERROR22 %p\n", p);
-                }
-#endif
                 tcp_flow_spy.available = tcp_flow_spy.available->next;
-
                 reinitialize_tcp_flow_log(p,saddr, daddr, sport, dport);
                 
                 add_in_used(p);
-
             } else {
-                goto ret;
+                goto retunlock;
             }
             p->saddr = saddr;
             p->sport = sport;
             p->daddr = daddr;
             p->dport = dport;
         }
+
+        spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
 
         p->last_packet_tstamp = get_time();
 
@@ -591,6 +577,7 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb) {
             p->rto = inet_csk(sk)->icsk_rto;
             p->rttvar = tp->rttvar;
         }
+
         if ( (tcb->flags & 
 #if SPY_COMPAT >= 35
                     TCPHDR_FIN
@@ -606,25 +593,17 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb) {
 #endif
                  
                  ) ) {
-
+            spin_lock_irqsave(&tcp_flow_spy.lock, flags);
             remove_from_used(p);
 
             remove_from_hashtable(saddr, daddr, sport, dport);
 
             p->next = tcp_flow_spy.finished;
             tcp_flow_spy.finished = p;
-#ifdef TCP_FLOW_SPY_DEBUG
-            printk(KERN_ERR "finished %d -> %d \n", 
-                    tcp_flow_spy.finished, 
-                    tcp_flow_spy.finished->next);
-#endif
+           
+            spin_unlock_irqrestore(&tcp_flow_spy.lock, flags); 
+
             wakeup = 1;
-#ifdef TCP_FLOW_SPY_DEBUG
-            printk(KERN_DEBUG 
-                    "Finished ip_src %u, src_port %u, finished logs %lX\n", 
-                    ((saddr >> 24) & 0xff), sport, tcp_flow_spy.finished); 
-#endif
-            
         } else if (live) {
             wakeup = 1;
         }
@@ -633,8 +612,13 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb) {
             tcp_flow_spy.last_update = get_time();
         }
     }
-ret:
+
+    goto ret;
+
+retunlock:
     spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
+
+ret:
     
     if (likely(wakeup)) {
         wake_up_interruptible(&tcp_flow_spy.wait);
@@ -696,7 +680,7 @@ static inline int tcpprobe_timespec_larger( struct timespec lhs,
 
 #define EXPIRE_SKB (2*60)
 
-static int tcpflowspy_sprint(char *tbuf, int n) {
+static inline int tcpflowspy_sprint(char *tbuf, int n) {
     struct tcp_flow_log *p = 0;
     struct timespec tv;
     int size = 0;
