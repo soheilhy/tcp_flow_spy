@@ -110,6 +110,8 @@ struct tcp_flow_log {
 
     u32 snd_cwnd_histogram[NUMBER_OF_BUCKETS];
 
+    spinlock_t lock;
+
     struct tcp_flow_log* used_thread_next;
     struct tcp_flow_log* used_thread_prev;
 
@@ -302,7 +304,9 @@ static inline void reinitialize_tcp_flow_log(struct tcp_flow_log* log,
     }
 
     memset(log, 0, 
-            sizeof(struct tcp_flow_log) - 4 * sizeof(struct tcp_flow_log*)); 
+            sizeof(struct tcp_flow_log) 
+                - 4 * sizeof(struct tcp_flow_log*) 
+                - sizeof(spinlock_t) ); 
     //memset(log->snd_cwnd_histogram, 0, NUMBER_OF_BUCKETS * sizeof(u32)); 
 
     log->first_packet_tstamp = get_time();
@@ -356,12 +360,13 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
     unsigned long flags;
     int wakeup = 0;
 
-    spin_lock_irqsave(&tcp_flow_spy.lock, flags);
 
     /* Only update if port matches */
     if ((port == 0 || ntohs(th->dest) == port ||
                 ntohs(th->source) == port)) {
 
+        spin_lock_irqsave(&tcp_flow_spy.lock, flags);
+        
         struct tcp_flow_log* p = 
             find_flow_log_for_skb(iph->saddr, iph->daddr, th->source, th->dest);
 
@@ -393,6 +398,8 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
             }
 
         }
+
+        spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
 
         p->last_packet_tstamp = get_time();
 
@@ -462,7 +469,6 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
     }
 
 ret:
-    spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
 
     if (likely(wakeup)) {
         wake_up_interruptible(&tcp_flow_spy.wait);
@@ -749,8 +755,6 @@ static int tcpflowspy_sprint(char *tbuf, int n) {
                     break;
                 }
 
-                tcp_flow_spy.last_read = tcp_flow_spy.last_update;
-                tcp_flow_spy.last_read.tv_sec--;
             }
         } while (0);
         //(!p && last_printed_flow_log != previous_last_printed_flow_log 
@@ -996,6 +1000,7 @@ static __init int tcpflowspy_init(void) {
                     &(tcp_flow_spy.storage[i][j+1]) : 
                     NULL;                
             }
+            spin_lock_init(&tcp_flow_spy.storage[i][j].lock);
         }
     }
 
