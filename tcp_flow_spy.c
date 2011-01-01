@@ -388,15 +388,10 @@ static inline int tcp_flow_log_avail(void) {
 }
 
 #define FINISHED_STATES \
-    (TCPF_CLOSE_WAIT|TCPF_CLOSE|TCPF_CLOSING|TCPF_TIME_WAIT|TCPF_LAST_ACK)
+    (TCPF_CLOSE|TCPF_CLOSING|TCPF_TIME_WAIT|TCPF_LAST_ACK)
 
 #define is_finished(s) ((1 << s->sk_state) & FINISHED_STATES)
 
-/*
- * Hook inserted to be called before each receive packet.
- * Note: arguments must match tcp_rcv_established()!
- * We should change this one to tcp_v4_do_rcv
- */
 static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
     const struct tcp_sock *tp = tcp_sk(sk);
     const struct tcphdr* th = tcp_hdr(skb); 
