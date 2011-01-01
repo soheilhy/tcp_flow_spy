@@ -191,7 +191,7 @@ static inline void remove_from_used(struct tcp_flow_log* log) {
         if (log == tcp_flow_spy.used) {
             tcp_flow_spy.used = next;
         }    
-
+      
         log->used_thread_next = log->used_thread_prev = NULL;
     }
 }
@@ -387,6 +387,11 @@ static inline int tcp_flow_log_avail(void) {
    return tcp_flow_spy.available != 0;
 }
 
+#define FINISHED_STATES \
+    (TCPF_CLOSE_WAIT|TCPF_CLOSE|TCPF_CLOSING|TCPF_TIME_WAIT|TCPF_LAST_ACK)
+
+#define is_finished(s) ((1 << s->sk_state) & FINISHED_STATES)
+
 /*
  * Hook inserted to be called before each receive packet.
  * Note: arguments must match tcp_rcv_established()!
@@ -397,7 +402,6 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
     const struct tcphdr* th = tcp_hdr(skb); 
     const struct iphdr* iph = ip_hdr(skb); 
     unsigned long flags;
-    int wakeup = 0;
 
     /* Only update if port matches */
     if ((port == 0 || ntohs(th->dest) == port ||
@@ -426,17 +430,18 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
             }
             spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
 
-            if (likely(p)){
+            if (likely(p)) {
                 reinitialize_tcp_flow_log(p, 
                         iph->saddr, iph->daddr, th->source, th->dest, now);
                 spin_lock_irqsave(&entry->lock, flags);
                 insert_into_hashtable(entry, p);
                 spin_unlock_irqrestore(&entry->lock, flags);
-            }else{
+            } else {
                 goto ret;
             }
         }
 
+        spin_lock_irqsave(&p->lock, flags);
         p->last_packet_tstamp = now;
         p->recv_count++;
         p->recv_size += skb->len; 
@@ -457,21 +462,28 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
             p->rto = inet_csk(sk)->icsk_rto;
             p->rttvar = tp->rttvar; 
         }
+        spin_unlock_irqrestore(&p->lock, flags);
         
-        if (live) {
-            wakeup = 1;
+        if (is_finished(sk) || th->rst) {
+            spin_lock_irqsave(&entry->lock, flags);
+            remove_from_hashtable(entry, 
+                    iph->saddr, iph->daddr, th->source, th->dest);
+            spin_unlock_irqrestore(&entry->lock, flags);
+
+            spin_lock_irqsave(&tcp_flow_spy.lock, flags);
+            remove_from_used(p);
+            p->next = tcp_flow_spy.finished;
+            tcp_flow_spy.finished = p;
+            spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
+        }
+       
+        if (is_finished(sk) || th->rst || live) {
             tcp_flow_spy.last_update = now;
+            wake_up(&tcp_flow_spy.wait);
         }
     }
 
-    goto ret;
-    
 ret:
-
-    if (likely(wakeup)) {
-        wake_up(&tcp_flow_spy.wait);
-    }
-    
     jprobe_return();
     return 0;
 }
@@ -532,6 +544,7 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
             goto ret;
         }
 
+        spin_lock_irqsave(&p->lock, flags);
         p->last_packet_tstamp = now;
         p->snd_count++;
         p->snd_size += skb->len; 
@@ -548,6 +561,27 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
             p->rto = inet_csk(sk)->icsk_rto;
             p->rttvar = tp->rttvar;
         }
+        spin_unlock_irqrestore(&p->lock, flags);
+
+        if (is_finished(sk)) {
+            
+            spin_lock_irqsave(&entry->lock, flags);
+            remove_from_hashtable(entry, 
+                    saddr, daddr, sport, dport);
+            spin_unlock_irqrestore(&entry->lock, flags);
+
+            spin_lock_irqsave(&tcp_flow_spy.lock, flags);
+            remove_from_used(p);
+            p->next = tcp_flow_spy.finished;
+            tcp_flow_spy.finished = p;
+            spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
+        }
+
+        if (is_finished(sk) || live) {
+            tcp_flow_spy.last_update = now;
+            wake_up(&tcp_flow_spy.wait);
+        }
+
     }
 
 ret:
@@ -563,7 +597,7 @@ static struct jprobe tcp_transmit_jprobe = {
     .entry = (kprobe_opcode_t*) jtcp_transmit_skb,
 };
 
-void jtcp_close(struct sock *sk, long timeout) {
+static void jtcp_close(struct sock *sk, long timeout) {
     const struct inet_sock *inet = inet_sk(sk);
     unsigned long flags;
 
@@ -589,9 +623,10 @@ void jtcp_close(struct sock *sk, long timeout) {
             daddr =
 #if SPY_COMPAT >= 34
                 inet->inet_daddr;
-#else
+#else   
                 inet->daddr;
 #endif
+                
     /* Only update if port matches */
     if ((port == 0 || ntohs(sport) == port ||
                 ntohs(dport) == port)) {
@@ -671,14 +706,16 @@ static inline int tcpflowspy_sprint(struct tcp_flow_log* p, int finished,
         char *tbuf, int n, struct timespec now) {
     int size = 0;
     struct timespec duration; 
+    unsigned long flags;
 
-    if (!p) {
+    if (unlikely(!p)) {
         goto ret;
     }
 
     duration = 
         tcpprobe_timespec_sub(p->last_packet_tstamp, p->first_packet_tstamp);
 
+    spin_lock_irqsave(&p->lock, flags);
     size = snprintf(tbuf, n,
             "%lu%09lu (%d) %x:%u %x:%u %lu.%09lu %u %lu %u %lu %u %u %u %u %u %u %u %u,%u,%u,%u,%u,%u,%u,%u,%u,%u \n",
             (unsigned long) now.tv_sec,
@@ -702,6 +739,8 @@ static inline int tcpflowspy_sprint(struct tcp_flow_log* p, int finished,
             p->snd_cwnd_histogram[4], p->snd_cwnd_histogram[5],
             p->snd_cwnd_histogram[6], p->snd_cwnd_histogram[7],
             p->snd_cwnd_histogram[8], p->snd_cwnd_histogram[9]);
+    spin_unlock_irqrestore(&p->lock, flags);
+
 ret:
     return size;
 }
@@ -712,7 +751,9 @@ static inline struct tcp_flow_log*
     return tcp_flow_spy.finished;
 }
 
-static inline struct tcp_flow_log* get_next_live_log_for_print(void) {
+static inline struct tcp_flow_log* 
+                get_next_live_log_for_print(struct timespec expiration_time) {
+
     struct tcp_flow_log* ret_for_print = NULL;
     if (likely(tcp_flow_spy.used)) {
         if (last_printed_flow_log == NULL) {
@@ -721,9 +762,14 @@ static inline struct tcp_flow_log* get_next_live_log_for_print(void) {
 
         if (tcpprobe_timespec_larger(
                     last_printed_flow_log->last_packet_tstamp, 
-                    last_printed_flow_log->last_printed_tstamp)) {
+                    last_printed_flow_log->last_printed_tstamp) || 
+            tcpprobe_timespec_larger(
+                    expiration_time,
+                    last_printed_flow_log->last_packet_tstamp)
+           ) {
             ret_for_print = last_printed_flow_log;
-        } 
+        }
+        
         last_printed_flow_log = last_printed_flow_log->used_thread_next;
     }   
     return ret_for_print;
@@ -755,18 +801,20 @@ static ssize_t tcpflowspy_read(struct file *file, char __user *buf,
                         tcp_flow_spy.last_update, 
                         tcp_flow_spy.last_read)
                     );
-
-
-        tcp_flow_spy.last_read = expiration_time = now = get_time();
-        
         if (error)
             break;
 
+        tcp_flow_spy.last_read = expiration_time = now = get_time();
+        
+        expiration_time.tv_sec -= EXPIRE_SKB;
+        if (unlikely(expiration_time.tv_sec < 0)) {
+            expiration_time.tv_sec = 0;
+        }
 
         spin_lock_irqsave(&tcp_flow_spy.lock, flags);
         log_for_print = get_next_finished_log_for_print();
         if ((log_for_print == NULL) && live) {
-            log_for_print = get_next_live_log_for_print();
+            log_for_print = get_next_live_log_for_print(expiration_time);
         } else {
             finished = 1;
         }
@@ -782,12 +830,7 @@ static ssize_t tcpflowspy_read(struct file *file, char __user *buf,
                     log_for_print->sport,
                     log_for_print->dport);
 
-        expiration_time.tv_sec -= EXPIRE_SKB;
-        if (unlikely(expiration_time.tv_sec < 0)) {
-            expiration_time.tv_sec = 0;
-        }
-
-        if ( tcpprobe_timespec_larger(
+        if ( !finished && tcpprobe_timespec_larger(
                     expiration_time,
                     log_for_print->last_packet_tstamp)
            ) {
