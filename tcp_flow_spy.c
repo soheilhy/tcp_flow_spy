@@ -112,7 +112,7 @@ struct tcp_flow_log {
 
     u32 snd_cwnd_histogram[NUMBER_OF_BUCKETS];
 
-    spinlock_t lock;
+//    spinlock_t lock;
 
     struct tcp_flow_log* used_thread_next;
     struct tcp_flow_log* used_thread_prev;
@@ -201,10 +201,12 @@ static inline void remove_from_used(struct tcp_flow_log* log) {
 // Soheil: I could use inet hash function, but I prefer to have my own. 
 static inline u32 skb_hash_function(__be32 saddr, __be32 daddr, 
                                     __be16 sport, __be16 dport) {
-        u32 hash = 
-            (ntohs(dport) + ntohs(sport)) % HASHTABLE_SIZE;
-    
-        return hash;
+
+    unsigned int h = (saddr ^ sport) ^ (daddr ^ dport);
+    h ^= h >> 16;
+    h ^= h >> 8;
+    h %= HASHTABLE_SIZE;
+    return h;
 }
 
 static inline struct hashtable_entry* get_entry_for_skb(
@@ -436,7 +438,7 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
             }
         }
 
-        spin_lock_irqsave(&p->lock, flags);
+        // spin_lock_irqsave(&p->lock, flags);
         p->last_packet_tstamp = now;
         p->recv_count++;
         p->recv_size += skb->len; 
@@ -457,7 +459,7 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
             p->rto = inet_csk(sk)->icsk_rto;
             p->rttvar = tp->rttvar; 
         }
-        spin_unlock_irqrestore(&p->lock, flags);
+        //spin_unlock_irqrestore(&p->lock, flags);
         
         if (is_finished(sk) || th->rst) {
             spin_lock_irqsave(&entry->lock, flags);
@@ -539,7 +541,7 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
             goto ret;
         }
 
-        spin_lock_irqsave(&p->lock, flags);
+        //spin_lock_irqsave(&p->lock, flags);
         p->last_packet_tstamp = now;
         p->snd_count++;
         p->snd_size += skb->len; 
@@ -556,9 +558,9 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
             p->rto = inet_csk(sk)->icsk_rto;
             p->rttvar = tp->rttvar;
         }
-        spin_unlock_irqrestore(&p->lock, flags);
+        //spin_unlock_irqrestore(&p->lock, flags);
 
-        if (is_finished(sk)) {
+/*        if (is_finished(sk)) {
             
             spin_lock_irqsave(&entry->lock, flags);
             remove_from_hashtable(entry, 
@@ -576,6 +578,7 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
             tcp_flow_spy.last_update = now;
             wake_up(&tcp_flow_spy.wait);
         }
+*/
 
     }
 
@@ -701,7 +704,7 @@ static inline int tcpflowspy_sprint(struct tcp_flow_log* p, int finished,
         char *tbuf, int n, struct timespec now) {
     int size = 0;
     struct timespec duration; 
-    unsigned long flags;
+    //unsigned long flags;
 
     if (unlikely(!p)) {
         goto ret;
@@ -710,7 +713,7 @@ static inline int tcpflowspy_sprint(struct tcp_flow_log* p, int finished,
     duration = 
         tcpprobe_timespec_sub(p->last_packet_tstamp, p->first_packet_tstamp);
 
-    spin_lock_irqsave(&p->lock, flags);
+    //spin_lock_irqsave(&p->lock, flags);
     size = snprintf(tbuf, n,
             "%lu%09lu (%d) %x:%u %x:%u %lu.%09lu %u %lu %u %lu %u %u %u %u %u %u %u %u,%u,%u,%u,%u,%u,%u,%u,%u,%u \n",
             (unsigned long) now.tv_sec,
@@ -734,7 +737,7 @@ static inline int tcpflowspy_sprint(struct tcp_flow_log* p, int finished,
             p->snd_cwnd_histogram[4], p->snd_cwnd_histogram[5],
             p->snd_cwnd_histogram[6], p->snd_cwnd_histogram[7],
             p->snd_cwnd_histogram[8], p->snd_cwnd_histogram[9]);
-    spin_unlock_irqrestore(&p->lock, flags);
+    //spin_unlock_irqrestore(&p->lock, flags);
 
 ret:
     return size;
@@ -970,7 +973,7 @@ static __init int tcpflowspy_init(void) {
                     &(tcp_flow_spy.storage[i][j+1]) : 
                     NULL;                
             }
-            spin_lock_init(&tcp_flow_spy.storage[i][j].lock);
+            //spin_lock_init(&tcp_flow_spy.storage[i][j].lock);
         }
     }
 
