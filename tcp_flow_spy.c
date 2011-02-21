@@ -46,8 +46,9 @@
 #define SPY_COMPAT 35 
 #endif
 
-#define HASHSIZE_COEF .4
-#define HASHTABLE_SIZE ((int) (HASHSIZE_COEF*bufsize))
+//#define HASHSIZE_COEF .4
+//#define HASHTABLE_SIZE ((int) (HASHSIZE_COEF*bufsize))
+#define HASHTABLE_SIZE 1357
 #define MAX_CONTINOUS 128
 #define SECTION_COUNT (bufsize/MAX_CONTINOUS)
 
@@ -141,7 +142,7 @@ struct hashtable_entry {
 };
 
 static struct {
-    u32 count;
+//    u32 count;
 
     struct hashtable_entry* entries;   
 } tcp_flow_hashtable;
@@ -157,6 +158,10 @@ static inline void add_in_used(struct tcp_flow_log* log) {
     if (unlikely(!log)) {
         return;
     }    
+
+    if (log->used) {
+        pr_info("error\n");
+    }
 
     log->used = 1; 
     log->used_thread_next = tcp_flow_spy.used;
@@ -381,7 +386,6 @@ static inline struct hashtable_entry* initialize_hashtable(u32 size) {
         }
     }
 
-    tcp_flow_hashtable.count = 0;
     return tcp_flow_hashtable.entries;
 }
 
@@ -399,13 +403,13 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
     const struct tcphdr* th = tcp_hdr(skb); 
     const struct iphdr* iph = ip_hdr(skb); 
     unsigned long flags;
+    struct timespec now = get_time();
 
     /* Only update if port matches */
     if ((port == 0 || ntohs(th->dest) == port ||
                 ntohs(th->source) == port)) {
         
         struct tcp_flow_log* p = NULL;
-        struct timespec now = get_time();
         struct hashtable_entry* entry = 
             get_entry_for_skb(iph->saddr, iph->daddr, th->source, th->dest);
 
@@ -425,6 +429,7 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
                 tcp_flow_spy.available = tcp_flow_spy.available->next;
                 add_in_used(p);
             }
+
             spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
 
             if (likely(p)) {
@@ -434,6 +439,8 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
                 insert_into_hashtable(entry, p);
                 spin_unlock_irqrestore(&entry->lock, flags);
             } else {
+                tcp_flow_spy.last_update = now;
+                wake_up(&tcp_flow_spy.wait);
                 goto ret;
             }
         }
@@ -483,6 +490,8 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
             tcp_flow_spy.last_update = now;
             wake_up(&tcp_flow_spy.wait);
         }
+
+
     }
 
 ret:
@@ -730,7 +739,7 @@ static inline int tcpflowspy_sprint(struct tcp_flow_log* p, int finished,
 
     spin_lock_irqsave(&p->lock, flags);
     size = snprintf(tbuf, n,
-            "%lu%09lu (%d) %x:%u %x:%u %lu.%09lu %u %lu %u %lu %u %u %u %u %u %u %u %u,%u,%u,%u,%u,%u,%u,%u,%u,%u \n",
+            "%lu%09lu (%d) %x:%u %x:%u %lu.%09lu %u %lu %lu %u %u %u %u %u %u %u %u,%u,%u,%u,%u,%u,%u,%u,%u,%u \n",
             (unsigned long) now.tv_sec,
             (unsigned long) now.tv_nsec,
             finished,
@@ -740,7 +749,6 @@ static inline int tcpflowspy_sprint(struct tcp_flow_log* p, int finished,
             (unsigned long) duration.tv_nsec,
             p->recv_count, 
             (unsigned long) p->recv_size, 
-            0,
             (unsigned long) p->snd_size,
             p->total_retransmissions, 
             p->out_of_order_packets, p->snd_cwnd_clamp,
@@ -807,6 +815,7 @@ static ssize_t tcpflowspy_read(struct file *file, char __user *buf,
         int finished = 0;
         struct timespec expiration_time; 
         struct hashtable_entry* entry = NULL;
+    
         /* Wait for data in buffer */
         error = wait_event_interruptible(tcp_flow_spy.wait,
                     tcp_flow_spy.finished != 0 ||
@@ -816,6 +825,7 @@ static ssize_t tcpflowspy_read(struct file *file, char __user *buf,
                     );
         if (error)
             break;
+
 
         tcp_flow_spy.last_read = expiration_time = now = get_time();
         
@@ -868,13 +878,14 @@ static ssize_t tcpflowspy_read(struct file *file, char __user *buf,
             continue;
         }
 
-        if (cnt + width < len && finished){
+
+        if (cnt + width < len && finished) {
             spin_lock_irqsave(&tcp_flow_spy.lock, flags);
             tcp_flow_spy.finished = log_for_print->next;
             log_for_print->next = tcp_flow_spy.available;
             tcp_flow_spy.available = log_for_print;
-            spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
             log_for_print->used = 0;
+            spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
         } 
 
         if (cnt + width >= len) {
@@ -990,8 +1001,8 @@ static __init int tcpflowspy_init(void) {
         }
     }
 
-    debug_check_no_locks_freed(&tcp_flow_spy, sizeof(tcp_flow_spy));
-    debug_check_no_locks_freed(&tcp_flow_hashtable, sizeof(tcp_flow_hashtable));
+//    debug_check_no_locks_freed(&tcp_flow_spy, sizeof(tcp_flow_spy));
+//    debug_check_no_locks_freed(&tcp_flow_hashtable, sizeof(tcp_flow_hashtable));
 
     pr_info("TCP flow spy registered (port=%d) bufsize=%u\n", port, bufsize);
     return 0;
