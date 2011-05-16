@@ -115,6 +115,9 @@ struct tcp_flow_log {
 
     spinlock_t lock;
 
+    u32 buff_size;
+    u32 max_buff_size; 
+
     struct tcp_flow_log* used_thread_next;
     struct tcp_flow_log* used_thread_prev;
 
@@ -449,6 +452,8 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
         p->last_packet_tstamp = now;
         p->recv_count++;
         p->recv_size += skb->len; 
+        p->buff_size = sk->sk_wmem_queued;
+        p->max_buff_size = sk->sk_sndbuf;
         if (likely(ntohl(th->seq) >= p->last_recv_seq)) {
             p->last_recv_seq = ntohl(th->seq);
         } else {
@@ -739,7 +744,7 @@ static inline int tcpflowspy_sprint(struct tcp_flow_log* p, int finished,
 
     spin_lock_irqsave(&p->lock, flags);
     size = snprintf(tbuf, n,
-            "%lu%09lu (%d) %x:%u %x:%u %lu.%09lu %u %lu %lu %u %u %u %u %u %u %u %u,%u,%u,%u,%u,%u,%u,%u,%u,%u \n",
+            "%lu%09lu (%d) %x:%u %x:%u %lu.%09lu %u %lu %lu %u %u %u %u %u %u %u %u %u %u,%u,%u,%u,%u,%u,%u,%u,%u,%u \n",
             (unsigned long) now.tv_sec,
             (unsigned long) now.tv_nsec,
             finished,
@@ -753,6 +758,8 @@ static inline int tcpflowspy_sprint(struct tcp_flow_log* p, int finished,
             p->total_retransmissions, 
             p->out_of_order_packets, p->snd_cwnd_clamp,
             p->ssthresh, p->srtt, p->rto, p->last_cwnd,
+            (unsigned int) p->buff_size,
+            (unsigned int) p->max_buff_size,
             // This crime is done only for the sake of performance :D
             // This was dyanmic before :)) 
             p->snd_cwnd_histogram[0], p->snd_cwnd_histogram[1],
