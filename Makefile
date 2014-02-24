@@ -8,8 +8,8 @@ clean:
 
 reinstall:
 		sudo /sbin/rmmod tcp_flow_spy
-		sudo /sbin/insmod tcp_flow_spy.ko bucket_length=5 bufsize=4096 live=1 
-	
+		sudo /sbin/insmod tcp_flow_spy.ko bucket_length=5 bufsize=4096 live=1
+
 install:
 		sudo /sbin/insmod tcp_flow_spy.ko bucket_length=5 bufsize=4096 live=1
 

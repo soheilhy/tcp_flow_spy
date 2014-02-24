@@ -1,6 +1,0 @@
-=============================================================================
-tcp_flow_spy
-=============================================================================
-    Version: 0.2
-    Author: Soheil Hassas Yeganeh <soheil@cs.toronto.edu>
-                based on tcp_probe by Stephen Hemminger <shemminger@osdl.org> 

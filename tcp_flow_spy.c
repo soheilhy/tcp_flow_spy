@@ -1,6 +1,6 @@
 /*
  * tcpflowspy - Observe the TCP flow summerized information with kprobes.
- *  
+ *
  * This module is based on tcpflowprobe:
  * The idea for this came from Werner Almesberger's umlsim
  * Copyright (C) 2004, Stephen Hemminger <shemminger@osdl.org>
@@ -34,7 +34,7 @@
 #include <linux/delay.h>
 #include <net/tcp.h>
 
-//#define TCP_FLOW_SPY_DEBUG
+// #define TCP_FLOW_SPY_DEBUG
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,19))
 #define SPY_COMPAT 18
@@ -42,15 +42,13 @@
 #define SPY_COMPAT 32
 #elif (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,35))
 #define SPY_COMPAT 34
-#else 
-#define SPY_COMPAT 35 
+#else
+#define SPY_COMPAT 35
 #endif
 
-//#define HASHSIZE_COEF .4
-//#define HASHTABLE_SIZE ((int) (HASHSIZE_COEF*bufsize))
 #define HASHTABLE_SIZE 1357
 #define MAX_CONTINOUS 128
-#define SECTION_COUNT (bufsize/MAX_CONTINOUS)
+#define SECTION_COUNT (bufsize / MAX_CONTINOUS)
 
 MODULE_AUTHOR("Soheil Hassas Yeganeh <soheil@cs.toronto.edu>");
 MODULE_DESCRIPTION("TCP flow snooper");
@@ -91,7 +89,7 @@ struct tcp_flow_log {
     __be32	saddr, daddr;
     __be16	sport, dport;
 
-    u32 recv_count; // No of received packets 
+    u32 recv_count; // No of received packets
     u32 snd_count; // No of sent packets
     u64	recv_size; // Avg length of the packet
     u64 snd_size; // Total size of packets in byte
@@ -107,7 +105,7 @@ struct tcp_flow_log {
     u32	srtt;
     u32 rttvar;
     u32 last_cwnd;
-    u32 rto; 
+    u32 rto;
 
     int used;
 
@@ -116,7 +114,7 @@ struct tcp_flow_log {
     spinlock_t lock;
 
     u32 buff_size;
-    u32 max_buff_size; 
+    u32 max_buff_size;
 
     struct tcp_flow_log* used_thread_next;
     struct tcp_flow_log* used_thread_prev;
@@ -140,14 +138,14 @@ static struct {
 
 struct hashtable_entry {
     spinlock_t lock;
-    struct tcp_flow_log* head; 
+    struct tcp_flow_log* head;
     struct tcp_flow_log* tail;
 };
 
 static struct {
 //    u32 count;
 
-    struct hashtable_entry* entries;   
+    struct hashtable_entry* entries;
 } tcp_flow_hashtable;
 
 
@@ -160,21 +158,21 @@ static inline struct timespec get_time(void) {
 static inline void add_in_used(struct tcp_flow_log* log) {
     if (unlikely(!log)) {
         return;
-    }    
+    }
 
     if (log->used) {
         pr_info("error\n");
     }
 
-    log->used = 1; 
+    log->used = 1;
     log->used_thread_next = tcp_flow_spy.used;
     log->used_thread_prev = NULL;
 
     if (tcp_flow_spy.used) {
-        tcp_flow_spy.used->used_thread_prev = log; 
-    }    
+        tcp_flow_spy.used->used_thread_prev = log;
+    }
 
-    tcp_flow_spy.used = log; 
+    tcp_flow_spy.used = log;
 }
 
 static inline void remove_from_used(struct tcp_flow_log* log) {
@@ -188,26 +186,26 @@ static inline void remove_from_used(struct tcp_flow_log* log) {
             last_printed_flow_log = 0;
         }
 
-        if (prev) { 
+        if (prev) {
             prev->used_thread_next = next;
-        }    
+        }
 
         if (next) {
             next->used_thread_prev = prev;
-        }    
+        }
 
         if (log == tcp_flow_spy.used) {
             tcp_flow_spy.used = next;
-        }    
-      
+        }
+
         log->used_thread_next = log->used_thread_prev = NULL;
     }
 }
 
 
 
-// Soheil: I could use inet hash function, but I prefer to have my own. 
-static inline u32 skb_hash_function(__be32 saddr, __be32 daddr, 
+// Soheil: I could use inet hash function, but I prefer to have my own.
+static inline u32 skb_hash_function(__be32 saddr, __be32 daddr,
                                     __be16 sport, __be16 dport) {
 
     unsigned int h = (saddr ^ sport) ^ (daddr ^ dport);
@@ -220,22 +218,22 @@ static inline u32 skb_hash_function(__be32 saddr, __be32 daddr,
 static inline struct hashtable_entry* get_entry_for_skb(
         __be32 saddr, __be32 daddr, __be16 sport, __be16 dport) {
     struct hashtable_entry* entry;
-    entry = 
+    entry =
         &(tcp_flow_hashtable.entries
                 [skb_hash_function(saddr, daddr, sport, dport)]
-            );                
+            );
     return entry;
 }
 
-static inline int is_log_for_skb(struct tcp_flow_log* log, __be32 saddr, 
+static inline int is_log_for_skb(struct tcp_flow_log* log, __be32 saddr,
         __be32 daddr, __be16 sport, __be16 dport) {
-    return  (saddr == log->saddr && daddr == log->daddr 
-                && dport == log->dport && sport == log->sport) || 
-            (daddr == log->saddr && daddr == log->saddr 
+    return  (saddr == log->saddr && daddr == log->daddr
+                && dport == log->dport && sport == log->sport) ||
+            (daddr == log->saddr && daddr == log->saddr
                 && dport == log->sport && sport == log->dport);
 }
 
-static inline struct tcp_flow_log* find_flow_log_for_skb( 
+static inline struct tcp_flow_log* find_flow_log_for_skb(
         struct hashtable_entry* entry,
         __be32 saddr, __be32 daddr, __be16 sport, __be16 dport) {
     struct tcp_flow_log* log_element;
@@ -259,7 +257,7 @@ ret:
     return log_element;
 }
 
-static inline void remove_from_hashentry(struct hashtable_entry* entry, 
+static inline void remove_from_hashentry(struct hashtable_entry* entry,
         struct tcp_flow_log* log) {
     if (unlikely(!log || !entry)) {
         return;
@@ -287,23 +285,23 @@ static inline void remove_from_hashentry(struct hashtable_entry* entry,
         log->prev->next = log->next;
     }
 
-    log->prev = NULL; 
+    log->prev = NULL;
     log->next = NULL;
-   
+
 }
 
-static inline struct tcp_flow_log* 
+static inline struct tcp_flow_log*
         remove_from_hashtable( struct hashtable_entry* entry,
             __be32 saddr, __be32 daddr, __be16 sport, __be16 dport) {
-    struct tcp_flow_log* log = 
+    struct tcp_flow_log* log =
         find_flow_log_for_skb(entry, saddr, daddr, sport, dport);
 
     remove_from_hashentry(entry, log);
     return log;
 }
 
-static inline void reinitialize_tcp_flow_log(struct tcp_flow_log* log, 
-        __be32 saddr, __be32 daddr, __be16 sport, __be16 dport, 
+static inline void reinitialize_tcp_flow_log(struct tcp_flow_log* log,
+        __be32 saddr, __be32 daddr, __be16 sport, __be16 dport,
         struct timespec tstamp) {
     int i = 0;
 
@@ -311,11 +309,11 @@ static inline void reinitialize_tcp_flow_log(struct tcp_flow_log* log,
         return;
     }
 
-    //memset(log, 0, 
-    //        sizeof(struct tcp_flow_log) 
-    //            - 4 * sizeof(struct tcp_flow_log*) 
-    //            - sizeof(spinlock_t) ); 
-    //memset(log->snd_cwnd_histogram, 0, NUMBER_OF_BUCKETS * sizeof(u32)); 
+    //memset(log, 0,
+    //        sizeof(struct tcp_flow_log)
+    //            - 4 * sizeof(struct tcp_flow_log*)
+    //            - sizeof(spinlock_t) );
+    //memset(log->snd_cwnd_histogram, 0, NUMBER_OF_BUCKETS * sizeof(u32));
 
     log->first_packet_tstamp = tstamp;
     log->last_packet_tstamp = tstamp;
@@ -327,7 +325,7 @@ static inline void reinitialize_tcp_flow_log(struct tcp_flow_log* log,
     log->sport = sport;
     log->dport = dport;
 
-    log->recv_count = 0; 
+    log->recv_count = 0;
     log->snd_count = 0;
     log->recv_size = 0;
     log->snd_size = 0;
@@ -343,7 +341,7 @@ static inline void reinitialize_tcp_flow_log(struct tcp_flow_log* log,
     log->srtt = 0;
     log->rttvar = 0;
     log->last_cwnd = 0;
-    log->rto = 0; 
+    log->rto = 0;
 
     log->used = 0;
 
@@ -352,20 +350,20 @@ static inline void reinitialize_tcp_flow_log(struct tcp_flow_log* log,
     }
 }
 
-static inline void insert_into_hashtable(struct hashtable_entry* entry, 
+static inline void insert_into_hashtable(struct hashtable_entry* entry,
                                         struct tcp_flow_log* log) {
     if (unlikely(entry->tail)) {
         entry->tail->next = log;
     } else {
         entry->head = log;
     }
-    
+
     log->prev = entry->tail;
     log->next = 0;
-    entry->tail = log; 
+    entry->tail = log;
 }
 
-/*static inline int is_finished(__be32 saddr, __be32 daddr, 
+/*static inline int is_finished(__be32 saddr, __be32 daddr,
         __be16 sport, __be16 dport) {
     struct tcp_flow_log* finished = tcp_flow_spy.finished;
     while (finished) {
@@ -380,7 +378,7 @@ static inline void insert_into_hashtable(struct hashtable_entry* entry,
 static inline struct hashtable_entry* initialize_hashtable(u32 size) {
     int i = 0;
 
-    tcp_flow_hashtable.entries = 
+    tcp_flow_hashtable.entries =
         kcalloc(size, sizeof(struct hashtable_entry), GFP_KERNEL);
 
     if (tcp_flow_hashtable.entries) {
@@ -403,21 +401,21 @@ static inline int tcp_flow_log_avail(void) {
 
 static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
     const struct tcp_sock *tp = tcp_sk(sk);
-    const struct tcphdr* th = tcp_hdr(skb); 
-    const struct iphdr* iph = ip_hdr(skb); 
+    const struct tcphdr* th = tcp_hdr(skb);
+    const struct iphdr* iph = ip_hdr(skb);
     unsigned long flags;
     struct timespec now = get_time();
 
     /* Only update if port matches */
     if ((port == 0 || ntohs(th->dest) == port ||
                 ntohs(th->source) == port)) {
-        
+
         struct tcp_flow_log* p = NULL;
-        struct hashtable_entry* entry = 
+        struct hashtable_entry* entry =
             get_entry_for_skb(iph->saddr, iph->daddr, th->source, th->dest);
 
         spin_lock_irqsave(&entry->lock, flags);
-        p = find_flow_log_for_skb(entry, 
+        p = find_flow_log_for_skb(entry,
                 iph->saddr, iph->daddr, th->source, th->dest);
         spin_unlock_irqrestore(&entry->lock, flags);
 
@@ -425,7 +423,7 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
             if (!th->syn) {
                 goto ret;
             }
-            
+
             spin_lock_irqsave(&tcp_flow_spy.lock, flags);
             if (tcp_flow_log_avail()) {
                 p = tcp_flow_spy.available;
@@ -436,7 +434,7 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
             spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
 
             if (likely(p)) {
-                reinitialize_tcp_flow_log(p, 
+                reinitialize_tcp_flow_log(p,
                         iph->saddr, iph->daddr, th->source, th->dest, now);
                 spin_lock_irqsave(&entry->lock, flags);
                 insert_into_hashtable(entry, p);
@@ -451,7 +449,7 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
         spin_lock_irqsave(&p->lock, flags);
         p->last_packet_tstamp = now;
         p->recv_count++;
-        p->recv_size += skb->len; 
+        p->recv_size += skb->len;
         p->buff_size = sk->sk_wmem_queued;
         p->max_buff_size = sk->sk_sndbuf;
         if (likely(ntohl(th->seq) >= p->last_recv_seq)) {
@@ -465,22 +463,22 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
             cwnd_index = min(NUMBER_OF_BUCKETS - 1, cwnd_index);
             p->snd_cwnd_histogram[cwnd_index]++;
             p->last_cwnd = tp->snd_cwnd;
-            p->snd_cwnd_clamp = tp->snd_cwnd_clamp; 
+            p->snd_cwnd_clamp = tp->snd_cwnd_clamp;
             p->ssthresh = tcp_current_ssthresh(sk);
             p->srtt = tp->srtt >> 3;
             p->rto = inet_csk(sk)->icsk_rto;
-            p->rttvar = tp->rttvar; 
+            p->rttvar = tp->rttvar;
             p->total_retransmissions = tp->total_retrans;
             if (likely(p->last_snd_seq && tp->snd_nxt > p->last_snd_seq)) {
-                p->snd_size += tp->snd_nxt - p->last_snd_seq;            
+                p->snd_size += tp->snd_nxt - p->last_snd_seq;
             }
             p->last_snd_seq = tp->snd_nxt;
         }
         spin_unlock_irqrestore(&p->lock, flags);
-        
+
         if (is_finished(sk) || th->rst) {
             spin_lock_irqsave(&entry->lock, flags);
-            remove_from_hashtable(entry, 
+            remove_from_hashtable(entry,
                     iph->saddr, iph->daddr, th->source, th->dest);
             spin_unlock_irqrestore(&entry->lock, flags);
 
@@ -490,7 +488,7 @@ static int jtcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb) {
             tcp_flow_spy.finished = p;
             spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
         }
-       
+
         if (likely(live || th->rst || is_finished(sk))) {
             tcp_flow_spy.last_update = now;
             wake_up(&tcp_flow_spy.wait);
@@ -525,20 +523,20 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 
     tp = tcp_sk(sk);
     inet = inet_sk(sk);
-    sport = 
+    sport =
 #if SPY_COMPAT >= 34
                 inet->inet_sport;
 #else
                 inet->sport;
 #endif
-    dport = 
+    dport =
 #if SPY_COMPAT >= 34
                 inet->inet_dport;
 #else
                 inet->dport;
 #endif
 
-    saddr = 
+    saddr =
 #if SPY_COMPAT >= 34
                 inet->inet_saddr;
 #else
@@ -558,9 +556,9 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
     if ((port == 0 || ntohs(sport) == port ||
                 ntohs(dport) == port)) {
 
-        struct tcp_flow_log* p = NULL; 
+        struct tcp_flow_log* p = NULL;
         struct timespec now = get_time();
-        struct hashtable_entry* entry = 
+        struct hashtable_entry* entry =
             get_entry_for_skb(saddr, daddr, sport, dport);
 
         spin_lock_irqsave(&entry->lock, flags);
@@ -574,7 +572,7 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
         //spin_lock_irqsave(&p->lock, flags);
         p->last_packet_tstamp = now;
         p->snd_count++;
-        p->snd_size += skb->len; 
+        p->snd_size += skb->len;
         p->total_retransmissions = tp->total_retrans;
 
         if (likely(sk->sk_state == TCP_ESTABLISHED)) {
@@ -582,7 +580,7 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
             cwnd_index = min(NUMBER_OF_BUCKETS - 1, cwnd_index);
             p->snd_cwnd_histogram[cwnd_index]++;
             p->last_cwnd = tp->snd_cwnd;
-            p->snd_cwnd_clamp = tp->snd_cwnd_clamp; 
+            p->snd_cwnd_clamp = tp->snd_cwnd_clamp;
             p->ssthresh = tcp_current_ssthresh(sk);
             p->srtt = tp->srtt >> 3;
             p->rto = inet_csk(sk)->icsk_rto;
@@ -591,9 +589,9 @@ static int jtcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
         //spin_unlock_irqrestore(&p->lock, flags);
 
 /// *        if (is_finished(sk)) {
-            
+
             spin_lock_irqsave(&entry->lock, flags);
-            remove_from_hashtable(entry, 
+            remove_from_hashtable(entry,
                     saddr, daddr, sport, dport);
             spin_unlock_irqrestore(&entry->lock, flags);
 
@@ -629,20 +627,20 @@ static void jtcp_close(struct sock *sk, long timeout) {
     const struct inet_sock *inet = inet_sk(sk);
     unsigned long flags;
 
-    __be16  sport = 
+    __be16  sport =
 #if SPY_COMPAT >= 34
                 inet->inet_sport,
 #else
                 inet->sport,
 #endif
-            dport = 
+            dport =
 #if SPY_COMPAT >= 34
                 inet->inet_dport;
 #else
                 inet->dport;
 #endif
 
-    __be32  saddr = 
+    __be32  saddr =
 #if SPY_COMPAT >= 34
                 inet->inet_saddr,
 #else
@@ -651,15 +649,15 @@ static void jtcp_close(struct sock *sk, long timeout) {
             daddr =
 #if SPY_COMPAT >= 34
                 inet->inet_daddr;
-#else   
+#else
                 inet->daddr;
 #endif
-                
+
     if ((port == 0 || ntohs(sport) == port ||
                 ntohs(dport) == port)) {
 
-        struct tcp_flow_log* p = NULL; 
-        struct hashtable_entry* entry = 
+        struct tcp_flow_log* p = NULL;
+        struct hashtable_entry* entry =
             get_entry_for_skb(saddr, daddr, sport, dport);
         struct timespec now = get_time();
 
@@ -720,26 +718,26 @@ static inline struct timespec tcpprobe_timespec_sub (
 }
 
 
-static inline int tcpprobe_timespec_larger( 
+static inline int tcpprobe_timespec_larger(
         struct timespec lhs, struct timespec rhs) {
-    int ret = lhs.tv_sec > rhs.tv_sec || 
+    int ret = lhs.tv_sec > rhs.tv_sec ||
         (lhs.tv_sec == rhs.tv_sec && lhs.tv_nsec > rhs.tv_nsec);
     return ret;
 }
 
 #define EXPIRE_SKB (2*60)
 
-static inline int tcpflowspy_sprint(struct tcp_flow_log* p, int finished, 
+static inline int tcpflowspy_sprint(struct tcp_flow_log* p, int finished,
         char *tbuf, int n, struct timespec now) {
     int size = 0;
-    struct timespec duration; 
+    struct timespec duration;
     unsigned long flags;
 
     if (unlikely(!p)) {
         goto ret;
     }
 
-    duration = 
+    duration =
         tcpprobe_timespec_sub(p->last_packet_tstamp, p->first_packet_tstamp);
 
     spin_lock_irqsave(&p->lock, flags);
@@ -752,16 +750,16 @@ static inline int tcpflowspy_sprint(struct tcp_flow_log* p, int finished,
             (unsigned int) ntohl(p->daddr), ntohs(p->dport),
             (unsigned long) duration.tv_sec,
             (unsigned long) duration.tv_nsec,
-            p->recv_count, 
-            (unsigned long) p->recv_size, 
+            p->recv_count,
+            (unsigned long) p->recv_size,
             (unsigned long) p->snd_size,
-            p->total_retransmissions, 
+            p->total_retransmissions,
             p->out_of_order_packets, p->snd_cwnd_clamp,
             p->ssthresh, p->srtt, p->rto, p->last_cwnd,
             (unsigned int) p->buff_size,
             (unsigned int) p->max_buff_size,
             // This crime is done only for the sake of performance :D
-            // This was dyanmic before :)) 
+            // This was dyanmic before :))
             p->snd_cwnd_histogram[0], p->snd_cwnd_histogram[1],
             p->snd_cwnd_histogram[2], p->snd_cwnd_histogram[3],
             p->snd_cwnd_histogram[4], p->snd_cwnd_histogram[5],
@@ -774,12 +772,12 @@ ret:
 }
 
 
-static inline struct tcp_flow_log* 
+static inline struct tcp_flow_log*
     get_next_finished_log_for_print(void) {
     return tcp_flow_spy.finished;
 }
 
-static inline struct tcp_flow_log* 
+static inline struct tcp_flow_log*
                 get_next_live_log_for_print(struct timespec expiration_time) {
 
     struct tcp_flow_log* ret_for_print = NULL;
@@ -789,17 +787,17 @@ static inline struct tcp_flow_log*
         }
 
         if (tcpprobe_timespec_larger(
-                    last_printed_flow_log->last_packet_tstamp, 
-                    last_printed_flow_log->last_printed_tstamp) || 
+                    last_printed_flow_log->last_packet_tstamp,
+                    last_printed_flow_log->last_printed_tstamp) ||
             tcpprobe_timespec_larger(
                     expiration_time,
                     last_printed_flow_log->last_packet_tstamp)
            ) {
             ret_for_print = last_printed_flow_log;
         }
-        
+
         last_printed_flow_log = last_printed_flow_log->used_thread_next;
-    }   
+    }
     return ret_for_print;
 }
 
@@ -820,14 +818,14 @@ static ssize_t tcpflowspy_read(struct file *file, char __user *buf,
         struct timespec now;
         struct tcp_flow_log* log_for_print = NULL;
         int finished = 0;
-        struct timespec expiration_time; 
+        struct timespec expiration_time;
         struct hashtable_entry* entry = NULL;
-    
+
         /* Wait for data in buffer */
         error = wait_event_interruptible(tcp_flow_spy.wait,
                     tcp_flow_spy.finished != 0 ||
                     tcpprobe_timespec_larger(
-                        tcp_flow_spy.last_update, 
+                        tcp_flow_spy.last_update,
                         tcp_flow_spy.last_read)
                     );
         if (error)
@@ -835,7 +833,7 @@ static ssize_t tcpflowspy_read(struct file *file, char __user *buf,
 
 
         tcp_flow_spy.last_read = expiration_time = now = get_time();
-        
+
         expiration_time.tv_sec -= EXPIRE_SKB;
         if (unlikely(expiration_time.tv_sec < 0)) {
             expiration_time.tv_sec = 0;
@@ -854,8 +852,8 @@ static ssize_t tcpflowspy_read(struct file *file, char __user *buf,
             continue;
         }
 
-        entry = get_entry_for_skb(  
-                    log_for_print->saddr, 
+        entry = get_entry_for_skb(
+                    log_for_print->saddr,
                     log_for_print->daddr,
                     log_for_print->sport,
                     log_for_print->dport);
@@ -878,7 +876,7 @@ static ssize_t tcpflowspy_read(struct file *file, char __user *buf,
             spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
         }
 
-        width = tcpflowspy_sprint(log_for_print, finished, 
+        width = tcpflowspy_sprint(log_for_print, finished,
                 tbuf, sizeof(tbuf), now);
 
         if (width == 0) {
@@ -893,7 +891,7 @@ static ssize_t tcpflowspy_read(struct file *file, char __user *buf,
             tcp_flow_spy.available = log_for_print;
             log_for_print->used = 0;
             spin_unlock_irqrestore(&tcp_flow_spy.lock, flags);
-        } 
+        }
 
         if (cnt + width >= len) {
             break;
@@ -930,7 +928,7 @@ static __init int tcpflowspy_init(void) {
 
     bufsize = roundup_pow_of_two(bufsize);
 
-    tcp_flow_spy.storage = 
+    tcp_flow_spy.storage =
         kcalloc(SECTION_COUNT, sizeof(struct tcp_flow_log*), GFP_KERNEL);
     if (!tcp_flow_spy.storage) {
         goto err0;
@@ -939,7 +937,7 @@ static __init int tcpflowspy_init(void) {
 
     for (i = 0; i < SECTION_COUNT; i++) {
 
-        tcp_flow_spy.storage[i] = 
+        tcp_flow_spy.storage[i] =
             kcalloc(MAX_CONTINOUS, sizeof(struct tcp_flow_log), GFP_KERNEL);
 
         if (!tcp_flow_spy.storage[i]) {
@@ -952,7 +950,7 @@ static __init int tcpflowspy_init(void) {
 
     }
 
-    tcp_flow_spy.available = tcp_flow_spy.storage[0]; 
+    tcp_flow_spy.available = tcp_flow_spy.storage[0];
     tcp_flow_spy.finished = NULL;
     tcp_flow_spy.used = NULL;
 
@@ -964,7 +962,7 @@ static __init int tcpflowspy_init(void) {
 #if SPY_COMPAT >= 32
                 &init_net,
 #endif
-                procname, S_IRUSR | S_IRGRP | S_IROTH, 
+                procname, S_IRUSR | S_IRGRP | S_IROTH,
                 &tcpflowspy_fops)) {
         goto err2;
     }
@@ -974,11 +972,11 @@ static __init int tcpflowspy_init(void) {
         goto err1;
     }
 
-/*    ret = register_jprobe(&tcp_transmit_jprobe);
-    if (ret) {
-        goto err1;
-    }
-*/
+    // ret = register_jprobe(&tcp_transmit_jprobe);
+    // if (ret) {
+    //    goto err1;
+    // }
+
     ret = register_jprobe(&tcp_close_jprobe);
     if (ret) {
         goto err1;
@@ -988,21 +986,22 @@ static __init int tcpflowspy_init(void) {
         int j  = 0;
         for (j = 0; j < MAX_CONTINOUS; j++) {
 
-/*            tcp_flow_spy.storage[i][j].snd_cwnd_histogram = 
-                kcalloc(NUMBER_OF_BUCKETS, sizeof(u32), GFP_KERNEL);
+            // tcp_flow_spy.storage[i][j].snd_cwnd_histogram =
+            //    kcalloc(NUMBER_OF_BUCKETS, sizeof(u32), GFP_KERNEL);
 
-            if (!tcp_flow_spy.storage[i][j].snd_cwnd_histogram)
-                goto err2;*/
+            // if (!tcp_flow_spy.storage[i][j].snd_cwnd_histogram)
+            //    goto err2;
+
             if (i != SECTION_COUNT - 1) {
-                tcp_flow_spy.storage[i][j].next = 
-                    j < MAX_CONTINOUS - 1 ? 
-                    &(tcp_flow_spy.storage[i][j+1]) : 
+                tcp_flow_spy.storage[i][j].next =
+                    j < MAX_CONTINOUS - 1 ?
+                    &(tcp_flow_spy.storage[i][j+1]) :
                     &(tcp_flow_spy.storage[i+1][0]);
             } else {
-                tcp_flow_spy.storage[i][j].next = 
-                    j < MAX_CONTINOUS - 1 ? 
-                    &(tcp_flow_spy.storage[i][j+1]) : 
-                    NULL;                
+                tcp_flow_spy.storage[i][j].next =
+                    j < MAX_CONTINOUS - 1 ?
+                    &(tcp_flow_spy.storage[i][j+1]) :
+                    NULL;
             }
             spin_lock_init(&tcp_flow_spy.storage[i][j].lock);
         }
@@ -1045,6 +1044,6 @@ static __exit void tcpflowspy_exit(void) {
     }
 
     pr_info("TCP flow spy unregistered \n");
- 
+
 }
 module_exit(tcpflowspy_exit);
