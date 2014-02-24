@@ -18,7 +18,7 @@ Installation
 
 Papers
 ------
-This kernel module is the major functionality used in OpenTCP:
+This kernel module is the main functionality of OpenTCP:
 
 [Monia Ghobadi, Soheil Hassas Yeganeh, Yashar Ganjali, "Rethinking End-to-end Congestion Control in Software-defined Networks"](http://dl.acm.org/citation.cfm?id=2390242)
 
